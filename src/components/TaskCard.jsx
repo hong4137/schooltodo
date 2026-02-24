@@ -19,8 +19,9 @@ export function formatDate(dateStr) {
 }
 
 export function getDday(dateStr) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const today = new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
   const target = new Date(dateStr + "T00:00:00");
   const diff = Math.ceil((target - today) / 86400000);
   if (diff < 0) return { text: `D+${Math.abs(diff)}`, overdue: true };
