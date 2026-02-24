@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { fetchDocumentImages, updateTask } from "../lib/tasks";
+import { fetchDocumentImages, updateTask, deleteTask } from "../lib/tasks";
 import { supabase } from "../lib/supabase";
 
 const priorityConfig = {
@@ -34,7 +34,7 @@ export function getDday(dateStr) {
   return { text: `D-${diff}`, overdue: false };
 }
 
-export default function TaskCard({ task, onToggle }) {
+export default function TaskCard({ task, onToggle, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [images, setImages] = useState([]);
   const [imagesLoaded, setImagesLoaded] = useState(false);
@@ -42,34 +42,25 @@ export default function TaskCard({ task, onToggle }) {
   const [memo, setMemo] = useState(task.memo || "");
   const [memoEditing, setMemoEditing] = useState(false);
   const [memoSaving, setMemoSaving] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const memoRef = useRef(null);
   const p = priorityConfig[task.priority] || priorityConfig.medium;
   const dday = getDday(task.due_date);
-  const uploaderName =
-    task.documents?.user_telegrams?.display_name ||
-    task.uploaded_by_name ||
-    null;
+  const uploaderName = task.documents?.user_telegrams?.display_name || task.uploaded_by_name || null;
 
   async function saveMemo() {
     setMemoSaving(true);
     try {
       await updateTask(task.id, { memo });
       setMemoEditing(false);
-    } catch (err) {
-      console.error("Failed to save memo:", err);
-    }
+    } catch (err) { console.error("Failed to save memo:", err); }
     setMemoSaving(false);
   }
 
-  useEffect(() => {
-    if (memoEditing && memoRef.current) memoRef.current.focus();
-  }, [memoEditing]);
+  useEffect(() => { if (memoEditing && memoRef.current) memoRef.current.focus(); }, [memoEditing]);
 
-  // Load images when expanded
   useEffect(() => {
-    if (expanded && !imagesLoaded && task.document_id) {
-      loadImages();
-    }
+    if (expanded && !imagesLoaded && task.document_id) loadImages();
   }, [expanded]);
 
   async function loadImages() {
@@ -78,7 +69,6 @@ export default function TaskCard({ task, onToggle }) {
       if (imgs && imgs.length > 0) {
         const withUrls = imgs.map((img) => {
           if (img.storage_path) {
-            // Public bucket - use direct public URL
             const url = `${supabase.supabaseUrl}/storage/v1/object/public/document-images/${img.storage_path}`;
             return { ...img, url };
           }
@@ -86,111 +76,65 @@ export default function TaskCard({ task, onToggle }) {
         });
         setImages(withUrls);
       }
-    } catch (err) {
-      console.error("Failed to load images:", err);
-    }
+    } catch (err) { console.error("Failed to load images:", err); }
     setImagesLoaded(true);
   }
 
   return (
     <>
-      <div
-        style={{
-          background: task.is_completed ? "#F8F9FA" : "var(--surface)",
-          borderRadius: 14,
-          border: `1px solid ${task.is_completed ? "#E9ECEF" : "var(--border)"}`,
-          boxShadow: task.is_completed ? "none" : "0 1px 3px rgba(0,0,0,0.04)",
-          overflow: "hidden",
-          transition: "all 0.2s",
-        }}
-      >
+      <div style={{
+        background: task.is_completed ? "#F8F9FA" : "var(--surface)",
+        borderRadius: 14,
+        border: `1px solid ${task.is_completed ? "#E9ECEF" : "var(--border)"}`,
+        boxShadow: task.is_completed ? "none" : "0 1px 3px rgba(0,0,0,0.04)",
+        overflow: "hidden", transition: "all 0.2s",
+      }}>
         {/* Header */}
-        <div
-          onClick={() => setExpanded(!expanded)}
-          style={{
-            display: "flex", alignItems: "flex-start", gap: 12,
-            padding: "14px 16px", cursor: "pointer",
-          }}
-        >
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggle?.(task.id, task.is_completed); }}
-            style={{
-              width: 24, height: 24, minWidth: 24, borderRadius: 8,
-              border: task.is_completed ? "none" : `2px solid ${p.color}`,
-              background: task.is_completed ? "var(--text-disabled)" : "transparent",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer", marginTop: 2, transition: "all 0.2s",
-            }}
-          >
+        <div onClick={() => setExpanded(!expanded)} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", cursor: "pointer" }}>
+          <button onClick={(e) => { e.stopPropagation(); onToggle?.(task.id, task.is_completed); }} style={{
+            width: 24, height: 24, minWidth: 24, borderRadius: 8,
+            border: task.is_completed ? "none" : `2px solid ${p.color}`,
+            background: task.is_completed ? "var(--text-disabled)" : "transparent",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", marginTop: 2, transition: "all 0.2s",
+          }}>
             {task.is_completed && (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
             )}
           </button>
-
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <span style={{
-                fontSize: 15, fontWeight: 600,
-                color: task.is_completed ? "var(--text-disabled)" : "var(--text-primary)",
-                textDecoration: task.is_completed ? "line-through" : "none",
-                lineHeight: 1.3,
-              }}>
-                {task.title}
-              </span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              {!task.is_completed && (
-                <span style={{ fontSize: 11, fontWeight: 700, color: p.color, background: p.bg, padding: "2px 7px", borderRadius: 6 }}>{p.label}</span>
-              )}
-              <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--border-light)", padding: "2px 7px", borderRadius: 6 }}>
-                {categoryLabels[task.category] || "기타"}
-              </span>
+            <span style={{ fontSize: 15, fontWeight: 600, color: task.is_completed ? "var(--text-disabled)" : "var(--text-primary)", textDecoration: task.is_completed ? "line-through" : "none", lineHeight: 1.3 }}>{task.title}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+              {!task.is_completed && <span style={{ fontSize: 11, fontWeight: 700, color: p.color, background: p.bg, padding: "2px 7px", borderRadius: 6 }}>{p.label}</span>}
+              <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--border-light)", padding: "2px 7px", borderRadius: 6 }}>{categoryLabels[task.category] || "기타"}</span>
               <span style={{ fontSize: 10, color: "var(--text-disabled)", transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
             </div>
           </div>
-
           <div style={{ textAlign: "right", minWidth: 44 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: dday.overdue ? "var(--red)" : task.is_completed ? "var(--text-disabled)" : "var(--text-secondary)" }}>
-              {dday.text}
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: dday.overdue ? "var(--red)" : task.is_completed ? "var(--text-disabled)" : "var(--text-secondary)" }}>{dday.text}</span>
             <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>{formatDate(task.due_date)}</div>
           </div>
         </div>
 
-        {/* Accordion detail */}
-        <div style={{
-          maxHeight: expanded ? 600 : 0,
-          opacity: expanded ? 1 : 0,
-          overflow: "hidden",
-          transition: "max-height 0.3s ease, opacity 0.2s ease",
-        }}>
-          <div style={{
-            padding: "0 16px 14px 52px",
-            borderTop: "1px solid var(--border-light)",
-            paddingTop: 12,
-            display: "flex", flexDirection: "column", gap: 10,
-          }}>
+        {/* Accordion */}
+        <div style={{ maxHeight: expanded ? 800 : 0, opacity: expanded ? 1 : 0, overflow: "hidden", transition: "max-height 0.3s ease, opacity 0.2s ease" }}>
+          <div style={{ padding: "0 16px 14px 52px", borderTop: "1px solid var(--border-light)", paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+
             {/* Description */}
             {task.description ? (
-              <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                {task.description}
-              </div>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>{task.description}</div>
             ) : (
-              <div style={{ fontSize: 13, color: "var(--text-disabled)", fontStyle: "italic" }}>
-                상세 설명이 없어요
-              </div>
+              <div style={{ fontSize: 13, color: "var(--text-disabled)", fontStyle: "italic" }}>상세 설명이 없어요</div>
             )}
 
-            {/* Meta info */}
+            {/* Meta */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, fontSize: 12, color: "var(--text-muted)" }}>
               <span>📅 {task.due_date}</span>
               {task.due_time && <span>⏰ {task.due_time.slice(0, 5)}</span>}
               {uploaderName && <span>📎 {uploaderName}</span>}
             </div>
 
-            {/* Original document images */}
+            {/* Document images */}
             {task.document_id && (
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>📄 원문 사진</div>
@@ -200,21 +144,11 @@ export default function TaskCard({ task, onToggle }) {
                   <div style={{ fontSize: 12, color: "var(--text-disabled)" }}>사진이 없어요</div>
                 ) : (
                   <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
-                    {images.map((img) => (
-                      img.url ? (
-                        <img
-                          key={img.id}
-                          src={img.url}
-                          alt={`원문 ${img.page_order}`}
-                          onClick={(e) => { e.stopPropagation(); setSelectedImage(img.url); }}
-                          style={{
-                            width: 80, height: 100, objectFit: "cover",
-                            borderRadius: 8, border: "1px solid var(--border)",
-                            cursor: "pointer", flexShrink: 0,
-                          }}
-                        />
-                      ) : null
-                    ))}
+                    {images.map((img) => img.url ? (
+                      <img key={img.id} src={img.url} alt={`원문 ${img.page_order}`}
+                        onClick={(e) => { e.stopPropagation(); setSelectedImage(img.url); }}
+                        style={{ width: 80, height: 100, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)", cursor: "pointer", flexShrink: 0 }} />
+                    ) : null)}
                   </div>
                 )}
               </div>
@@ -225,73 +159,190 @@ export default function TaskCard({ task, onToggle }) {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>📝 메모</span>
                 {!memoEditing ? (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }}
-                    style={{ fontSize: 11, color: "var(--teal)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}
-                  >수정</button>
+                  <button onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }} style={{ fontSize: 11, color: "var(--teal)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>수정</button>
                 ) : (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); saveMemo(); }}
-                    disabled={memoSaving}
-                    style={{ fontSize: 11, color: "#fff", background: "var(--teal)", border: "none", cursor: "pointer", fontWeight: 600, padding: "3px 10px", borderRadius: 6 }}
-                  >{memoSaving ? "저장 중..." : "저장"}</button>
+                  <button onClick={(e) => { e.stopPropagation(); saveMemo(); }} disabled={memoSaving} style={{ fontSize: 11, color: "#fff", background: "var(--teal)", border: "none", cursor: "pointer", fontWeight: 600, padding: "3px 10px", borderRadius: 6 }}>{memoSaving ? "저장 중..." : "저장"}</button>
                 )}
               </div>
               {memoEditing ? (
-                <textarea
-                  ref={memoRef}
-                  value={memo}
-                  onChange={(e) => setMemo(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  placeholder="메모를 입력하세요..."
-                  style={{
-                    width: "100%", minHeight: 60, padding: "8px 10px",
-                    fontSize: 13, border: "1px solid var(--border)", borderRadius: 8,
-                    resize: "vertical", fontFamily: "inherit", lineHeight: 1.5,
-                    color: "var(--text-primary)", background: "var(--surface)",
-                  }}
-                />
+                <textarea ref={memoRef} value={memo} onChange={(e) => setMemo(e.target.value)} onClick={(e) => e.stopPropagation()} placeholder="메모를 입력하세요..."
+                  style={{ width: "100%", minHeight: 60, padding: "8px 10px", fontSize: 13, border: "1px solid var(--border)", borderRadius: 8, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, color: "var(--text-primary)", background: "var(--surface)" }} />
               ) : (
-                <div
-                  onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }}
-                  style={{
-                    fontSize: 13, color: memo ? "var(--text-secondary)" : "var(--text-disabled)",
-                    fontStyle: memo ? "normal" : "italic", lineHeight: 1.5,
-                    padding: "6px 10px", background: "var(--border-light)", borderRadius: 8,
-                    cursor: "pointer", minHeight: 32,
-                  }}
-                >{memo || "메모를 추가하려면 탭하세요"}</div>
+                <div onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }}
+                  style={{ fontSize: 13, color: memo ? "var(--text-secondary)" : "var(--text-disabled)", fontStyle: memo ? "normal" : "italic", lineHeight: 1.5, padding: "6px 10px", background: "var(--border-light)", borderRadius: 8, cursor: "pointer", minHeight: 32 }}>
+                  {memo || "메모를 추가하려면 탭하세요"}
+                </div>
               )}
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button onClick={(e) => { e.stopPropagation(); setEditOpen(true); }}
+                style={{ flex: 1, padding: "10px 0", fontSize: 13, fontWeight: 600, color: "var(--text-primary)", background: "var(--border-light)", border: "none", borderRadius: 10, cursor: "pointer" }}>
+                ✏️ 수정
+              </button>
+              <button onClick={async (e) => {
+                  e.stopPropagation();
+                  if (confirm("이 할 일을 삭제할까요?")) {
+                    await deleteTask(task.id);
+                    onUpdate?.();
+                  }
+                }}
+                style={{ padding: "10px 16px", fontSize: 13, fontWeight: 600, color: "var(--red)", background: "var(--red-bg)", border: "none", borderRadius: 10, cursor: "pointer" }}>
+                🗑️
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Full-screen image viewer */}
+      {/* Edit bottom sheet */}
+      {editOpen && <EditSheet task={task} onClose={() => setEditOpen(false)} onSave={onUpdate} />}
+
+      {/* Full-screen image */}
       {selectedImage && (
-        <div
-          onClick={() => setSelectedImage(null)}
-          style={{
-            position: "fixed", inset: 0, zIndex: 100,
-            background: "rgba(0,0,0,0.9)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            padding: 20, cursor: "zoom-out",
-          }}
-        >
-          <img
-            src={selectedImage}
-            alt="원문"
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }}
-          />
-          <div style={{
-            position: "absolute", top: 20, right: 20,
-            color: "#fff", fontSize: 24, cursor: "pointer",
-            background: "rgba(0,0,0,0.5)", borderRadius: "50%",
-            width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>✕</div>
+        <div onClick={() => setSelectedImage(null)} style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, cursor: "zoom-out" }}>
+          <img src={selectedImage} alt="원문" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />
+          <div style={{ position: "absolute", top: 20, right: 20, color: "#fff", fontSize: 24, cursor: "pointer", background: "rgba(0,0,0,0.5)", borderRadius: "50%", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</div>
         </div>
       )}
     </>
+  );
+}
+
+// ══════════════════════════════════════
+// Edit Bottom Sheet
+// ══════════════════════════════════════
+function EditSheet({ task, onClose, onSave }) {
+  const [title, setTitle] = useState(task.title);
+  const [dueDate, setDueDate] = useState(task.due_date);
+  const [dueTime, setDueTime] = useState(task.due_time?.slice(0, 5) || "");
+  const [priority, setPriority] = useState(task.priority);
+  const [category, setCategory] = useState(task.category);
+  const [description, setDescription] = useState(task.description || "");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateTask(task.id, {
+        title,
+        due_date: dueDate,
+        due_time: dueTime || null,
+        priority,
+        category,
+        description,
+      });
+      onSave?.();
+      onClose();
+    } catch (err) {
+      console.error("Failed to update:", err);
+      alert("저장 실패");
+    }
+    setSaving(false);
+  }
+
+  const inputStyle = {
+    width: "100%", padding: "10px 12px", fontSize: 14,
+    border: "1px solid var(--border)", borderRadius: 10,
+    color: "var(--text-primary)", background: "var(--surface)",
+    fontFamily: "inherit",
+  };
+
+  const labelStyle = { fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4, display: "block" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
+
+      {/* Sheet */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        background: "var(--bg)", borderRadius: "20px 20px 0 0",
+        padding: "20px 20px 32px", maxHeight: "85vh", overflowY: "auto",
+        animation: "slideUp 0.3s ease",
+      }}>
+        <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
+        <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>할 일 수정</h3>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Title */}
+          <div>
+            <label style={labelStyle}>제목</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle} />
+          </div>
+
+          {/* Date + Time */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>마감일</label>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={inputStyle} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>시간 (선택)</label>
+              <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} style={inputStyle} />
+            </div>
+          </div>
+
+          {/* Priority */}
+          <div>
+            <label style={labelStyle}>우선순위</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              {Object.entries(priorityConfig).map(([key, cfg]) => (
+                <button key={key} onClick={() => setPriority(key)} style={{
+                  flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600,
+                  color: priority === key ? "#fff" : cfg.color,
+                  background: priority === key ? cfg.color : cfg.bg,
+                  border: "none", borderRadius: 10, cursor: "pointer",
+                  transition: "all 0.2s",
+                }}>{cfg.label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Category */}
+          <div>
+            <label style={labelStyle}>카테고리</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {Object.entries(categoryLabels).map(([key, label]) => (
+                <button key={key} onClick={() => setCategory(key)} style={{
+                  padding: "6px 14px", fontSize: 12, fontWeight: 600,
+                  color: category === key ? "#fff" : "var(--text-secondary)",
+                  background: category === key ? "#1A1A2E" : "var(--border-light)",
+                  border: "none", borderRadius: 8, cursor: "pointer",
+                }}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label style={labelStyle}>상세 설명</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+              rows={3} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.5 }} />
+          </div>
+
+          {/* Save button */}
+          <button onClick={handleSave} disabled={saving || !title || !dueDate}
+            style={{
+              width: "100%", padding: "14px 0", fontSize: 15, fontWeight: 700,
+              color: "#fff", background: saving ? "#999" : "linear-gradient(135deg, #1A1A2E, #2D2B55)",
+              border: "none", borderRadius: 14, cursor: saving ? "default" : "pointer",
+              marginTop: 4,
+            }}>
+            {saving ? "저장 중..." : "저장"}
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+      `}</style>
+    </div>
   );
 }
 
