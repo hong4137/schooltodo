@@ -3,7 +3,6 @@ import { useAuth } from "../lib/auth";
 import { fetchTasks, toggleTask } from "../lib/tasks";
 import TaskCard, { getDday } from "../components/TaskCard";
 
-
 const FILTERS = [
   { id: "today", label: "오늘" },
   { id: "tomorrow", label: "내일" },
@@ -12,8 +11,14 @@ const FILTERS = [
   { id: "all", label: "전체" },
 ];
 
-function getDateRanges(todayDate) {
-  const today = new Date(todayDate);
+function getKSTToday() {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
+}
+
+function getDateRanges() {
+  const today = getKSTToday();
   const todayStr = today.toISOString().slice(0, 10);
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
@@ -40,7 +45,6 @@ export default function TodayPage() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  
   const [filter, setFilter] = useState("all");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -60,10 +64,12 @@ export default function TodayPage() {
     catch { setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, is_completed: isCompleted } : t)); }
   }
 
-  const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  const today = new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
-  const ranges = getDateRanges(today);
+  const ranges = getDateRanges();
+
+  // Today counts for summary card
+  const todayAll = useMemo(() => tasks.filter((t) => t.due_date === ranges.todayStr), [tasks, ranges.todayStr]);
+  const todayRemaining = todayAll.filter((t) => !t.is_completed).length;
+  const todayCompleted = todayAll.filter((t) => t.is_completed).length;
 
   const overdueTasks = useMemo(() => tasks.filter((t) => t.due_date < ranges.todayStr && !t.is_completed), [tasks, ranges.todayStr]);
 
@@ -89,8 +95,6 @@ export default function TodayPage() {
     }
   }, [tasks, filter, ranges]);
 
-  const completedTasks = useMemo(() => tasks.filter((t) => t.is_completed), [tasks]);
-  const totalIncomplete = tasks.filter((t) => !t.is_completed).length;
   const activeFilter = FILTERS.find((f) => f.id === filter);
 
   const groupedTasks = useMemo(() => {
@@ -102,7 +106,7 @@ export default function TodayPage() {
   }, [filteredTasks]);
 
   function formatGroupDate(dateStr) {
-    const d = new Date(dateStr + "T00:00:00");
+    const d = new Date(dateStr + "T00:00:00+09:00");
     const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
     const dday = getDday(dateStr);
     if (dateStr === ranges.todayStr) return `오늘 (${d.getMonth() + 1}/${d.getDate()} ${dayNames[d.getDay()]})`;
@@ -127,11 +131,12 @@ export default function TodayPage() {
     <div style={{ padding: "0 16px 100px" }}>
       <Header todayStr={ranges.todayStr} />
 
-      {/* Summary */}
+      {/* Summary - 오늘 기준 */}
       <div style={{ background: "linear-gradient(135deg, #1A1A2E 0%, #2D2B55 100%)", borderRadius: 16, padding: "18px 20px", marginBottom: 20, color: "#fff" }}>
+        <div style={{ fontSize: 13, opacity: 0.7, marginBottom: 8 }}>오늘의 할 일</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div><span style={{ fontSize: 14, opacity: 0.8 }}>미완료</span><span style={{ fontSize: 28, fontWeight: 800, marginLeft: 10 }}>{totalIncomplete}개</span></div>
-          <div style={{ textAlign: "right" }}><span style={{ fontSize: 14, opacity: 0.8 }}>완료</span><span style={{ fontSize: 20, fontWeight: 700, marginLeft: 8, color: "#4ECDC4" }}>{completedTasks.length}개</span></div>
+          <div><span style={{ fontSize: 14, opacity: 0.8 }}>남은 일</span><span style={{ fontSize: 28, fontWeight: 800, marginLeft: 10 }}>{todayRemaining}개</span></div>
+          <div style={{ textAlign: "right" }}><span style={{ fontSize: 14, opacity: 0.8 }}>완료</span><span style={{ fontSize: 20, fontWeight: 700, marginLeft: 8, color: "#4ECDC4" }}>{todayCompleted}개</span></div>
         </div>
         {overdueTasks.length > 0 && (
           <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(231,76,60,0.2)", borderRadius: 10, fontSize: 13, color: "#FF6B6B" }}>⚠️ 지난 할 일 {overdueTasks.length}개가 있어요</div>
@@ -190,8 +195,6 @@ export default function TodayPage() {
           </div>
         ))
       )}
-
-      
     </div>
   );
 }
