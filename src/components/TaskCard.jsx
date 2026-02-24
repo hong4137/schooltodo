@@ -57,18 +57,14 @@ export default function TaskCard({ task, onToggle }) {
     try {
       const imgs = await fetchDocumentImages(task.document_id);
       if (imgs && imgs.length > 0) {
-        // Get signed URLs for private bucket
-        const withUrls = await Promise.all(
-          imgs.map(async (img) => {
-            if (img.storage_path) {
-              const { data } = await supabase.storage
-                .from("document-images")
-                .createSignedUrl(img.storage_path, 3600); // 1hr
-              return { ...img, url: data?.signedUrl };
-            }
-            return img;
-          })
-        );
+        const withUrls = imgs.map((img) => {
+          if (img.storage_path) {
+            // Public bucket - use direct public URL
+            const url = `${supabase.supabaseUrl}/storage/v1/object/public/document-images/${img.storage_path}`;
+            return { ...img, url };
+          }
+          return img;
+        });
         setImages(withUrls);
       }
     } catch (err) {
