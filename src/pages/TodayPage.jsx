@@ -172,7 +172,7 @@ export default function TodayPage() {
             <span style={{ fontSize: 12, color: "var(--red)", background: "var(--red-bg)", padding: "1px 8px", borderRadius: 10, fontWeight: 600 }}>{overdueTasks.length}</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {overdueTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} />))}
+            {overdueTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} onUpdate={loadTasks} />))}
           </div>
         </div>
       )}
@@ -190,7 +190,7 @@ export default function TodayPage() {
               <span style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--border-light)", padding: "1px 8px", borderRadius: 10, fontWeight: 600 }}>{dateTasks.length}</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {dateTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} />))}
+              {dateTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} onUpdate={loadTasks} />))}
             </div>
           </div>
         ))
