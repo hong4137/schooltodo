@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "../lib/auth";
 import { fetchTasks, toggleTask } from "../lib/tasks";
 import TaskCard, { getDday } from "../components/TaskCard";
-import TaskDetail from "../components/TaskDetail";
+
 
 const FILTERS = [
   { id: "today", label: "오늘" },
@@ -40,7 +40,7 @@ export default function TodayPage() {
   const { user } = useAuth();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTask, setSelectedTask] = useState(null);
+  
   const [filter, setFilter] = useState("all");
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
@@ -167,7 +167,7 @@ export default function TodayPage() {
             <span style={{ fontSize: 12, color: "var(--red)", background: "var(--red-bg)", padding: "1px 8px", borderRadius: 10, fontWeight: 600 }}>{overdueTasks.length}</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {overdueTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} onSelect={setSelectedTask} />))}
+            {overdueTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} />))}
           </div>
         </div>
       )}
@@ -185,13 +185,13 @@ export default function TodayPage() {
               <span style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--border-light)", padding: "1px 8px", borderRadius: 10, fontWeight: 600 }}>{dateTasks.length}</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {dateTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} onSelect={setSelectedTask} />))}
+              {dateTasks.map((t) => (<TaskCard key={t.id} task={t} onToggle={handleToggle} />))}
             </div>
           </div>
         ))
       )}
 
-      {selectedTask && (<TaskDetail task={selectedTask} onClose={() => setSelectedTask(null)} onToggle={handleToggle} />)}
+      
     </div>
   );
 }
