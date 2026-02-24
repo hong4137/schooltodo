@@ -66,6 +66,21 @@ export async function deleteTask(taskId) {
   if (error) throw error;
 }
 
+export async function fetchDocumentImages(documentId) {
+  const { data, error } = await supabase
+    .from("document_images")
+    .select("*")
+    .eq("document_id", documentId)
+    .order("page_order", { ascending: true });
+  if (error) throw error;
+  return data;
+}
+
+export function getImageUrl(storagePath) {
+  if (!storagePath) return null;
+  return `${supabase.supabaseUrl}/storage/v1/object/authenticated/document-images/${storagePath}`;
+}
+
 export async function fetchTasksByMonth(userId, year, month) {
   const startDate = `${year}-${String(month + 1).padStart(2, "0")}-01`;
   const endDate =
