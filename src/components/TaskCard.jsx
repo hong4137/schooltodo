@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { fetchDocumentImages } from "../lib/tasks";
+import { useState, useEffect, useRef } from "react";
+import { fetchDocumentImages, updateTask } from "../lib/tasks";
 import { supabase } from "../lib/supabase";
 
 const priorityConfig = {
@@ -39,12 +39,31 @@ export default function TaskCard({ task, onToggle }) {
   const [images, setImages] = useState([]);
   const [imagesLoaded, setImagesLoaded] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [memo, setMemo] = useState(task.memo || "");
+  const [memoEditing, setMemoEditing] = useState(false);
+  const [memoSaving, setMemoSaving] = useState(false);
+  const memoRef = useRef(null);
   const p = priorityConfig[task.priority] || priorityConfig.medium;
   const dday = getDday(task.due_date);
   const uploaderName =
     task.documents?.user_telegrams?.display_name ||
     task.uploaded_by_name ||
     null;
+
+  async function saveMemo() {
+    setMemoSaving(true);
+    try {
+      await updateTask(task.id, { memo });
+      setMemoEditing(false);
+    } catch (err) {
+      console.error("Failed to save memo:", err);
+    }
+    setMemoSaving(false);
+  }
+
+  useEffect(() => {
+    if (memoEditing && memoRef.current) memoRef.current.focus();
+  }, [memoEditing]);
 
   // Load images when expanded
   useEffect(() => {
@@ -200,6 +219,50 @@ export default function TaskCard({ task, onToggle }) {
                 )}
               </div>
             )}
+
+            {/* Memo */}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>📝 메모</span>
+                {!memoEditing ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }}
+                    style={{ fontSize: 11, color: "var(--teal)", background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}
+                  >수정</button>
+                ) : (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); saveMemo(); }}
+                    disabled={memoSaving}
+                    style={{ fontSize: 11, color: "#fff", background: "var(--teal)", border: "none", cursor: "pointer", fontWeight: 600, padding: "3px 10px", borderRadius: 6 }}
+                  >{memoSaving ? "저장 중..." : "저장"}</button>
+                )}
+              </div>
+              {memoEditing ? (
+                <textarea
+                  ref={memoRef}
+                  value={memo}
+                  onChange={(e) => setMemo(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  placeholder="메모를 입력하세요..."
+                  style={{
+                    width: "100%", minHeight: 60, padding: "8px 10px",
+                    fontSize: 13, border: "1px solid var(--border)", borderRadius: 8,
+                    resize: "vertical", fontFamily: "inherit", lineHeight: 1.5,
+                    color: "var(--text-primary)", background: "var(--surface)",
+                  }}
+                />
+              ) : (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setMemoEditing(true); }}
+                  style={{
+                    fontSize: 13, color: memo ? "var(--text-secondary)" : "var(--text-disabled)",
+                    fontStyle: memo ? "normal" : "italic", lineHeight: 1.5,
+                    padding: "6px 10px", background: "var(--border-light)", borderRadius: 8,
+                    cursor: "pointer", minHeight: 32,
+                  }}
+                >{memo || "메모를 추가하려면 탭하세요"}</div>
+              )}
+            </div>
           </div>
         </div>
       </div>
