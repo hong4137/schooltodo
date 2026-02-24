@@ -60,7 +60,9 @@ export default function TodayPage() {
     catch { setTasks((prev) => prev.map((t) => t.id === taskId ? { ...t, is_completed: isCompleted } : t)); }
   }
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const today = new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
   const ranges = getDateRanges(today);
 
   const overdueTasks = useMemo(() => tasks.filter((t) => t.due_date < ranges.todayStr && !t.is_completed), [tasks, ranges.todayStr]);
@@ -195,7 +197,7 @@ export default function TodayPage() {
 }
 
 function Header({ todayStr }) {
-  const d = new Date(todayStr + "T00:00:00");
+  const d = new Date(todayStr + "T00:00:00+09:00");
   const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
   const label = `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${dayNames[d.getDay()]}요일`;
   return (
