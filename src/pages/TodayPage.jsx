@@ -195,6 +195,42 @@ export default function TodayPage() {
           </div>
         ))
       )}
+
+      {/* Completed tasks section */}
+      <CompletedSection tasks={tasks} ranges={ranges} onToggle={handleToggle} onUpdate={loadTasks} />
+    </div>
+  );
+}
+
+function CompletedSection({ tasks, ranges, onToggle, onUpdate }) {
+  const [open, setOpen] = useState(false);
+  const completed = useMemo(() =>
+    tasks.filter((t) => t.is_completed).sort((a, b) => b.due_date.localeCompare(a.due_date)),
+    [tasks]
+  );
+
+  if (completed.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 8, borderTop: "1px solid var(--border-light)", paddingTop: 12 }}>
+      <button onClick={() => setOpen(!open)} style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        width: "100%", padding: "10px 0", background: "none", border: "none",
+        cursor: "pointer", fontSize: 14, fontWeight: 600, color: "var(--text-muted)",
+      }}>
+        <span>✅ 완료된 항목 ({completed.length}개)</span>
+        <span style={{ fontSize: 12, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+      </button>
+      <div style={{
+        maxHeight: open ? completed.length * 120 : 0,
+        opacity: open ? 1 : 0,
+        overflow: "hidden",
+        transition: "max-height 0.3s ease, opacity 0.2s ease",
+      }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 8 }}>
+          {completed.map((t) => (<TaskCard key={t.id} task={t} onToggle={onToggle} onUpdate={onUpdate} />))}
+        </div>
+      </div>
     </div>
   );
 }
