@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
+import { subscribePush, unsubscribePush, isPushSubscribed } from "../lib/push";
 
 export default function SettingsPage() {
   const { user, profile, signOut, fetchProfile } = useAuth();
@@ -10,6 +11,50 @@ export default function SettingsPage() {
   const [evening, setEvening] = useState(profile?.notification_evening || "21:00");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      loadTelegrams();
+      checkPush();
+    }
+  }, [user]);
+
+  async function checkPush() {
+    const subscribed = await isPushSubscribed();
+    setPushEnabled(subscribed);
+    setPushLoading(false);
+  }
+
+  async function togglePush() {
+    setPushLoading(true);
+    try {
+      if (pushEnabled) {
+        await unsubscribePush();
+        setPushEnabled(false);
+        showToast("푸시 알림이 해제되었어요.");
+      } else {
+        const perm = await Notification.requestPermission();
+        if (perm !== "granted") {
+          showToast("알림 권한을 허용해주세요.");
+          setPushLoading(false);
+          return;
+        }
+        const sub = await subscribePush(user.id);
+        if (sub) {
+          setPushEnabled(true);
+          showToast("푸시 알림이 활성화되었어요!");
+        } else {
+          showToast("푸시 설정 중 오류가 발생했어요.");
+        }
+      }
+    } catch (err) {
+      console.error("Push toggle error:", err);
+      showToast("오류가 발생했어요.");
+    }
+    setPushLoading(false);
+  }
 
   useEffect(() => {
     if (user) loadTelegrams();
@@ -103,6 +148,25 @@ export default function SettingsPage() {
 
       {/* Notifications */}
       <Card title="알림 설정">
+        {"PushManager" in window && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border-light)" }}>
+            <div>
+              <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>📱 푸시 알림</span>
+              <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>앱에서 직접 알림 받기</div>
+            </div>
+            <button onClick={togglePush} disabled={pushLoading} style={{
+              width: 50, height: 28, borderRadius: 14, border: "none", cursor: pushLoading ? "default" : "pointer",
+              background: pushEnabled ? "#4ECDC4" : "#CED4DA", position: "relative", transition: "background 0.2s",
+            }}>
+              <div style={{
+                width: 22, height: 22, borderRadius: 11, background: "#fff",
+                position: "absolute", top: 3,
+                left: pushEnabled ? 25 : 3, transition: "left 0.2s",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+              }} />
+            </button>
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border-light)" }}>
           <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>아침 알림</span>
           <input type="time" value={morning} onChange={(e) => setMorning(e.target.value)} style={timeInputStyle} />
