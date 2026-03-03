@@ -82,3 +82,37 @@ export async function deleteSubject(id) {
   const { error } = await supabase.from("timetable_subjects").delete().eq("id", id);
   if (error) throw error;
 }
+
+export async function fetchPickups(userId) {
+  const { data, error } = await supabase
+    .from("timetable_pickups")
+    .select("*")
+    .eq("user_id", userId);
+  if (error) throw error;
+  return (data || []).reduce((acc, p) => {
+    acc[p.day] = { ...p, time: p.pickup_time?.slice(0, 5) };
+    return acc;
+  }, {});
+}
+
+export async function upsertPickup(userId, day, time, memo) {
+  const { data, error } = await supabase
+    .from("timetable_pickups")
+    .upsert(
+      { user_id: userId, day, pickup_time: time + ":00", memo: memo || null },
+      { onConflict: "user_id,day" }
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return { ...data, time: data.pickup_time?.slice(0, 5) };
+}
+
+export async function deletePickup(userId, day) {
+  const { error } = await supabase
+    .from("timetable_pickups")
+    .delete()
+    .eq("user_id", userId)
+    .eq("day", day);
+  if (error) throw error;
+}
