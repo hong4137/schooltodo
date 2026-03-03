@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
-import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, createSubject } from "../lib/timetable";
+import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup } from "../lib/timetable";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -33,17 +33,22 @@ export default function TimetablePage() {
   const { user } = useAuth();
   const [blocks, setBlocks] = useState([]);
   const [subjects, setSubjects] = useState([]);
+  const [pickups, setPickups] = useState({});
   const [loading, setLoading] = useState(true);
   const [editBlock, setEditBlock] = useState(null);
   const [showEdit, setShowEdit] = useState(false);
+  const [showPickupEdit, setShowPickupEdit] = useState(false);
 
   useEffect(() => { if (user) load(); }, [user]);
 
   async function load() {
     try {
-      const [b, s] = await Promise.all([fetchBlocks(user.id), fetchSubjects(user.id)]);
+      const [b, s, p] = await Promise.all([
+        fetchBlocks(user.id), fetchSubjects(user.id), fetchPickups(user.id),
+      ]);
       setBlocks(b);
       setSubjects(s.length > 0 ? s : DEFAULT_SUBJECTS);
+      setPickups(p);
     } catch (err) { console.error("Load timetable:", err); }
     setLoading(false);
   }
@@ -51,19 +56,22 @@ export default function TimetablePage() {
   // Compute time range from data
   const { timeStart, timeEnd, pxPerMin, gridHeight } = useMemo(() => {
     if (blocks.length === 0) return { timeStart: 9 * 60, timeEnd: 16 * 60, pxPerMin: 1.4, gridHeight: 420 * 1.4 };
-    const mins = blocks.map((b) => timeToMin(b.start));
-    const maxs = blocks.map((b) => timeToMin(b.end));
-    const earliest = Math.floor(Math.min(...mins) / 60) * 60;
-    const latest = Math.ceil(Math.max(...maxs) / 60) * 60;
+    const allTimes = [
+      ...blocks.map((b) => timeToMin(b.start)),
+      ...blocks.map((b) => timeToMin(b.end)),
+      ...Object.values(pickups).map((p) => timeToMin(p.time)),
+    ];
+    const earliest = Math.floor(Math.min(...allTimes) / 60) * 60;
+    const latest = Math.ceil(Math.max(...allTimes) / 60) * 60;
     const total = latest - earliest;
     const px = Math.min(1.6, Math.max(0.9, 600 / total));
     return { timeStart: earliest, timeEnd: latest, pxPerMin: px, gridHeight: total * px };
-  }, [blocks]);
+  }, [blocks, pickups]);
 
   const hours = [];
   for (let h = Math.floor(timeStart / 60); h <= Math.floor(timeEnd / 60); h++) hours.push(h);
 
-  // Current time
+  // Current time (KST)
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
@@ -92,6 +100,21 @@ export default function TimetablePage() {
     setShowEdit(false);
   }
 
+  async function handlePickupSave(data) {
+    try {
+      for (const [day, time] of Object.entries(data)) {
+        if (time) {
+          const result = await upsertPickup(user.id, day, time);
+          setPickups((prev) => ({ ...prev, [day]: result }));
+        } else {
+          await deletePickup(user.id, day);
+          setPickups((prev) => { const n = { ...prev }; delete n[day]; return n; });
+        }
+      }
+    } catch (err) { console.error("Pickup save:", err); alert("저장 실패"); }
+    setShowPickupEdit(false);
+  }
+
   function handleBlockClick(block) { setEditBlock(block); setShowEdit(true); }
   function handleAdd() { setEditBlock(null); setShowEdit(true); }
 
@@ -109,21 +132,32 @@ export default function TimetablePage() {
           <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>2026년 1학기</div>
           <h1 style={{ fontSize: 24, fontWeight: 800, color: "var(--text-primary)", margin: "2px 0 0" }}>시간표</h1>
         </div>
-        <button onClick={handleAdd} style={{
-          width: 40, height: 40, borderRadius: 12, border: "none", background: "#1A1A2E",
-          color: "#fff", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center",
-          justifyContent: "center", boxShadow: "0 2px 8px rgba(26,26,46,0.3)",
-        }}>+</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowPickupEdit(true)} style={{
+            width: 40, height: 40, borderRadius: 12, border: "1px solid var(--border)",
+            background: "var(--surface)", fontSize: 18, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>🚗</button>
+          <button onClick={handleAdd} style={{
+            width: 40, height: 40, borderRadius: 12, border: "none", background: "#1A1A2E",
+            color: "#fff", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center",
+            justifyContent: "center", boxShadow: "0 2px 8px rgba(26,26,46,0.3)",
+          }}>+</button>
+        </div>
       </div>
 
       {/* Legend */}
-      <div style={{ padding: "10px 16px", display: "flex", gap: 8 }}>
+      <div style={{ padding: "10px 16px", display: "flex", gap: 8, flexWrap: "wrap" }}>
         {Object.entries(CATEGORIES).filter(([k]) => k !== "other").map(([key, cat]) => (
           <div key={key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: cat.border }} />
             <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{cat.label}</span>
           </div>
         ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ width: 8, height: 8, borderRadius: 4, background: "#FF6B35" }} />
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>픽업</span>
+        </div>
       </div>
 
       {/* Empty state */}
@@ -152,8 +186,11 @@ export default function TimetablePage() {
             {DAY_KEYS.map((dayKey, di) => {
               const dayBlocks = blocks.filter((b) => b.day === dayKey);
               const isToday = nowDay === di + 1;
+              const pickup = pickups[dayKey];
+
               return (
                 <div key={dayKey} style={{ flex: 1, minWidth: 0 }}>
+                  {/* Day header */}
                   <div style={{
                     textAlign: "center", padding: "6px 0 8px",
                     background: isToday ? "#1A1A2E" : "transparent",
@@ -161,20 +198,38 @@ export default function TimetablePage() {
                   }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: isToday ? "#fff" : "#666" }}>{DAYS[di]}</span>
                   </div>
+
+                  {/* Timeline column */}
                   <div style={{
                     position: "relative", height: gridHeight, margin: "0 1px",
-                    background: isToday ? "#F0F2FF" : "#fff",
-                    borderRadius: 8, border: `1px solid ${isToday ? "#D0D5F7" : "#F0F0F0"}`,
+                    background: "#fff",
+                    borderRadius: 8, border: "1px solid #F0F0F0",
                   }}>
+                    {/* Hour lines */}
                     {hours.map((h) => (
                       <div key={h} style={{ position: "absolute", top: (h * 60 - timeStart) * pxPerMin, left: 0, right: 0, borderTop: "1px solid #F0F0F0" }} />
                     ))}
+
+                    {/* Blocks */}
                     {dayBlocks.map((b) => (
                       <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={handleBlockClick} />
                     ))}
+
+                    {/* Pickup marker */}
+                    {pickup && (
+                      <PickupMarker time={pickup.time} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} />
+                    )}
+
+                    {/* Now line - only on today */}
                     {showNowLine && isToday && (
-                      <div style={{ position: "absolute", top: nowTop, left: -2, right: -2, height: 2, background: "#FF3B30", zIndex: 10, borderRadius: 1 }}>
-                        <div style={{ position: "absolute", left: -4, top: -3, width: 8, height: 8, borderRadius: "50%", background: "#FF3B30" }} />
+                      <div style={{
+                        position: "absolute", top: nowTop, left: -2, right: -2,
+                        height: 2, background: "#FF3B30", zIndex: 10, borderRadius: 1,
+                      }}>
+                        <div style={{
+                          position: "absolute", left: -4, top: -3, width: 8, height: 8,
+                          borderRadius: "50%", background: "#FF3B30",
+                        }} />
                       </div>
                     )}
                   </div>
@@ -186,14 +241,50 @@ export default function TimetablePage() {
       )}
 
       {showEdit && (
-        <EditSheet
-          block={editBlock}
-          subjects={subjects}
-          onClose={() => setShowEdit(false)}
-          onSave={handleSave}
-          onDelete={handleDelete}
-        />
+        <EditSheet block={editBlock} subjects={subjects} onClose={() => setShowEdit(false)} onSave={handleSave} onDelete={handleDelete} />
       )}
+      {showPickupEdit && (
+        <PickupEditSheet pickups={pickups} onClose={() => setShowPickupEdit(false)} onSave={handlePickupSave} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════
+// Pickup marker
+// ══════════════════════════════
+function PickupMarker({ time, timeStart, pxPerMin, isToday }) {
+  const min = timeToMin(time) - timeStart;
+  const top = min * pxPerMin;
+
+  if (isToday) {
+    // Today: big highlighted marker
+    return (
+      <div style={{ position: "absolute", top: top - 14, left: -1, right: -1, zIndex: 8, pointerEvents: "none" }}>
+        <div style={{
+          background: "linear-gradient(135deg, #FF6B35, #FF8C42)",
+          borderRadius: 8, padding: "4px 0", textAlign: "center",
+          boxShadow: "0 2px 10px rgba(255,107,53,0.4)",
+          animation: "pickupPulse 2s ease-in-out infinite",
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#fff", opacity: 0.85 }}>🚗 픽업</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>{time}</div>
+        </div>
+        <style>{`@keyframes pickupPulse { 0%,100% { box-shadow: 0 2px 10px rgba(255,107,53,0.4); } 50% { box-shadow: 0 2px 18px rgba(255,107,53,0.7); } }`}</style>
+      </div>
+    );
+  }
+
+  // Other days: subtle line
+  return (
+    <div style={{
+      position: "absolute", top, left: 0, right: 0, zIndex: 6,
+      borderTop: "2px dashed #FF6B3580", pointerEvents: "none",
+    }}>
+      <span style={{
+        position: "absolute", top: -8, right: 2, fontSize: 8,
+        color: "#FF6B35", fontWeight: 700, background: "#fff", padding: "0 2px",
+      }}>{time}</span>
     </div>
   );
 }
@@ -231,6 +322,66 @@ function TimetableBlock({ block, timeStart, pxPerMin, onClick }) {
           {block.start}~{block.end}
         </span>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════
+// Pickup Edit Bottom Sheet
+// ══════════════════════════════
+function PickupEditSheet({ pickups, onClose, onSave }) {
+  const [times, setTimes] = useState(() => {
+    const init = {};
+    DAY_KEYS.forEach((d) => { init[d] = pickups[d]?.time || ""; });
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const timeOptions = [""];
+  for (let m = 12 * 60; m <= 20 * 60; m += 10) timeOptions.push(minToTime(m));
+
+  async function handleSubmit() {
+    setSaving(true);
+    await onSave?.(times);
+    setSaving(false);
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)",
+        borderRadius: "20px 20px 0 0", padding: "20px 20px 32px",
+        animation: "sheetUp 0.3s ease",
+      }}>
+        <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
+        <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>🚗 픽업 시간 설정</h3>
+        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px" }}>요일별 픽업 시간을 입력하세요. 비우면 표시 안 돼요.</p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {DAY_KEYS.map((d, i) => (
+            <div key={d} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ width: 28, fontSize: 15, fontWeight: 700, color: "var(--text-primary)", textAlign: "center" }}>{DAYS[i]}</span>
+              <select value={times[d]} onChange={(e) => setTimes((prev) => ({ ...prev, [d]: e.target.value }))}
+                style={{
+                  flex: 1, padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)",
+                  borderRadius: 10, fontFamily: "inherit", color: times[d] ? "var(--text-primary)" : "var(--text-disabled)",
+                  background: "var(--surface)", appearance: "auto",
+                }}>
+                <option value="">없음</option>
+                {timeOptions.filter(Boolean).map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          ))}
+
+          <button onClick={handleSubmit} disabled={saving} style={{
+            width: "100%", padding: "14px 0", fontSize: 15, fontWeight: 700, color: "#fff",
+            background: saving ? "#CCC" : "linear-gradient(135deg, #FF6B35, #FF8C42)",
+            border: "none", borderRadius: 14, cursor: saving ? "default" : "pointer", marginTop: 4,
+          }}>{saving ? "저장 중..." : "저장"}</button>
+        </div>
+      </div>
+      <style>{`@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
     </div>
   );
 }
