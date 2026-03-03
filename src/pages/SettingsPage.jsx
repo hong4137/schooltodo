@@ -13,6 +13,7 @@ export default function SettingsPage() {
   const [toast, setToast] = useState("");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(true);
+  const [pickupReminder, setPickupReminder] = useState(profile?.pickup_reminder_enabled !== false);
 
   useEffect(() => {
     if (user) {
@@ -20,6 +21,12 @@ export default function SettingsPage() {
       checkPush();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (profile) {
+      setPickupReminder(profile.pickup_reminder_enabled !== false);
+    }
+  }, [profile]);
 
   async function checkPush() {
     const subscribed = await isPushSubscribed();
@@ -93,11 +100,12 @@ export default function SettingsPage() {
       .update({
         notification_morning: morning + ":00",
         notification_evening: evening + ":00",
+        pickup_reminder_enabled: pickupReminder,
       })
       .eq("id", user.id);
     setSaving(false);
     if (!error) {
-      showToast("알림 시간이 저장되었어요!");
+      showToast("알림 설정이 저장되었어요!");
       fetchProfile(user.id);
     }
   }
@@ -174,6 +182,23 @@ export default function SettingsPage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
           <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>저녁 알림</span>
           <input type="time" value={evening} onChange={(e) => setEvening(e.target.value)} style={timeInputStyle} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderTop: "1px solid var(--border-light)" }}>
+          <div>
+            <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>🚗 픽업 리마인드</span>
+            <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>픽업 1시간 전 알림</div>
+          </div>
+          <button onClick={() => setPickupReminder(!pickupReminder)} style={{
+            width: 50, height: 28, borderRadius: 14, border: "none", cursor: "pointer",
+            background: pickupReminder ? "#FF8C42" : "#CED4DA", position: "relative", transition: "background 0.2s",
+          }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: 11, background: "#fff",
+              position: "absolute", top: 3,
+              left: pickupReminder ? 25 : 3, transition: "left 0.2s",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+            }} />
+          </button>
         </div>
         <button onClick={saveNotifications} disabled={saving} style={{ ...saveBtnStyle, opacity: saving ? 0.6 : 1 }}>
           {saving ? "저장 중..." : "저장"}
