@@ -25,9 +25,11 @@ export function formatDate(dateStr) {
 export function getDday(dateStr) {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  const today = new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
-  const target = new Date(dateStr + "T00:00:00");
-  const diff = Math.ceil((target - today) / 86400000);
+  const todayStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, "0")}-${String(kst.getUTCDate()).padStart(2, "0")}`;
+  // Compare as strings to avoid timezone issues
+  const todayMs = new Date(todayStr + "T00:00:00").getTime();
+  const targetMs = new Date(dateStr + "T00:00:00").getTime();
+  const diff = Math.round((targetMs - todayMs) / 86400000);
   if (diff < 0) return { text: `D+${Math.abs(diff)}`, overdue: true };
   if (diff === 0) return { text: "오늘", overdue: false };
   if (diff === 1) return { text: "내일", overdue: false };
