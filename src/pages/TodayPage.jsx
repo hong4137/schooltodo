@@ -14,15 +14,25 @@ const FILTERS = [
 function getKSTToday() {
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
+  const y = kst.getUTCFullYear();
+  const m = kst.getUTCMonth();
+  const d = kst.getUTCDate();
+  return { year: y, month: m, date: d };
+}
+
+function kstDateStr(y, m, d) {
+  return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 function getDateRanges() {
-  const today = getKSTToday();
-  const todayStr = today.toISOString().slice(0, 10);
+  const { year, month, date } = getKSTToday();
+  const todayStr = kstDateStr(year, month, date);
+  
+  const today = new Date(year, month, date);
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
-  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+  const tomorrowStr = kstDateStr(tomorrow.getFullYear(), tomorrow.getMonth(), tomorrow.getDate());
+  
   const day = today.getDay();
   const thisMonday = new Date(today);
   thisMonday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
@@ -34,10 +44,10 @@ function getDateRanges() {
   nextSunday.setDate(nextMonday.getDate() + 6);
   return {
     todayStr, tomorrowStr,
-    thisWeekStart: thisMonday.toISOString().slice(0, 10),
-    thisWeekEnd: thisSunday.toISOString().slice(0, 10),
-    nextWeekStart: nextMonday.toISOString().slice(0, 10),
-    nextWeekEnd: nextSunday.toISOString().slice(0, 10),
+    thisWeekStart: kstDateStr(thisMonday.getFullYear(), thisMonday.getMonth(), thisMonday.getDate()),
+    thisWeekEnd: kstDateStr(thisSunday.getFullYear(), thisSunday.getMonth(), thisSunday.getDate()),
+    nextWeekStart: kstDateStr(nextMonday.getFullYear(), nextMonday.getMonth(), nextMonday.getDate()),
+    nextWeekEnd: kstDateStr(nextSunday.getFullYear(), nextSunday.getMonth(), nextSunday.getDate()),
   };
 }
 
