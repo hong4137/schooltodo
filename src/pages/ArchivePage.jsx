@@ -74,7 +74,7 @@ export default function ArchivePage() {
       <PostDetail
         post={post}
         onBack={() => setViewPost(null)}
-        onEdit={() => setEditPost(post)}
+        onEdit={() => { setEditPost(post); setViewPost(null); }}
         onDelete={() => handleDelete(post.id)}
         onPin={() => handlePin(post.id, post.pinned)}
         onDeleteFile={handleDeleteFile}
