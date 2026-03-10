@@ -3,9 +3,11 @@ import { useAuth } from "../lib/auth";
 import { fetchTasksByMonth, toggleTask } from "../lib/tasks";
 import TaskCard from "../components/TaskCard";
 import TaskDetail from "../components/TaskDetail";
+import ArchivePage from "./ArchivePage";
 
 export default function CalendarPage() {
   const { user } = useAuth();
+  const [tab, setTab] = useState("calendar");
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayStr = today.toISOString().slice(0, 10);
@@ -69,10 +71,28 @@ export default function CalendarPage() {
 
   return (
     <div style={{ padding: "0 16px 100px" }}>
+      {/* Segment control */}
       <div style={{ padding: "20px 0 16px" }}>
-        <h1 style={{ fontSize: 26, fontWeight: 800, color: "var(--text-primary)", margin: 0, letterSpacing: -0.5 }}>캘린더</h1>
+        <div style={{ display: "flex", background: "var(--border-light)", borderRadius: 12, padding: 3 }}>
+          <button onClick={() => setTab("calendar")} style={{
+            flex: 1, padding: "9px 0", fontSize: 14, fontWeight: 600, border: "none", borderRadius: 10, cursor: "pointer",
+            background: tab === "calendar" ? "var(--surface)" : "transparent",
+            color: tab === "calendar" ? "var(--text-primary)" : "var(--text-muted)",
+            boxShadow: tab === "calendar" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            transition: "all 0.2s",
+          }}>📅 캘린더</button>
+          <button onClick={() => setTab("archive")} style={{
+            flex: 1, padding: "9px 0", fontSize: 14, fontWeight: 600, border: "none", borderRadius: 10, cursor: "pointer",
+            background: tab === "archive" ? "var(--surface)" : "transparent",
+            color: tab === "archive" ? "var(--text-primary)" : "var(--text-muted)",
+            boxShadow: tab === "archive" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            transition: "all 0.2s",
+          }}>📌 보관함</button>
+        </div>
       </div>
 
+      {tab === "archive" ? <ArchivePage /> : (
+      <>
       {/* Month nav */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <button onClick={prevMonth} style={navBtnStyle}>‹</button>
@@ -172,6 +192,8 @@ export default function CalendarPage() {
 
       {selectedTask && (
         <TaskDetail task={selectedTask} onClose={() => setSelectedTask(null)} onToggle={handleToggle} />
+      )}
+      </>
       )}
     </div>
   );
