@@ -48,8 +48,7 @@ export default function TimetablePage() {
         fetchBlocks(user.id), fetchSubjects(user.id), fetchPickups(user.id), fetchAlerts(user.id),
       ]);
       // Filter out alert-type blocks (도보하원, 태권도 이동) from regular blocks
-      const ALERT_NAMES = ["도보하원", "태권도 이동"];
-      setBlocks(b.filter((bl) => !ALERT_NAMES.includes(bl.name)));
+      setBlocks(b.filter((bl) => !bl.name.includes("도보하원") && !bl.name.includes("이동")));
       setSubjects(s.length > 0 ? s : DEFAULT_SUBJECTS);
       setPickups(p);
       setAlerts(a);
