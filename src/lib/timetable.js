@@ -116,3 +116,16 @@ export async function deletePickup(userId, day) {
     .eq("day", day);
   if (error) throw error;
 }
+
+export async function fetchAlerts(userId) {
+  const { data, error } = await supabase
+    .from("timetable_alerts")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+  if (error) throw error;
+  return (data || []).map((a) => ({
+    ...a,
+    time: a.alert_time?.slice(0, 5),
+  }));
+}
