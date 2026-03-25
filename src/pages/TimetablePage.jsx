@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
-import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup } from "../lib/timetable";
+import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts } from "../lib/timetable";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -34,6 +34,7 @@ export default function TimetablePage() {
   const [blocks, setBlocks] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [pickups, setPickups] = useState({});
+  const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editBlock, setEditBlock] = useState(null);
   const [showEdit, setShowEdit] = useState(false);
@@ -43,12 +44,15 @@ export default function TimetablePage() {
 
   async function load() {
     try {
-      const [b, s, p] = await Promise.all([
-        fetchBlocks(user.id), fetchSubjects(user.id), fetchPickups(user.id),
+      const [b, s, p, a] = await Promise.all([
+        fetchBlocks(user.id), fetchSubjects(user.id), fetchPickups(user.id), fetchAlerts(user.id),
       ]);
-      setBlocks(b);
+      // Filter out alert-type blocks (도보하원, 태권도 이동) from regular blocks
+      const ALERT_NAMES = ["도보하원", "태권도 이동"];
+      setBlocks(b.filter((bl) => !ALERT_NAMES.includes(bl.name)));
       setSubjects(s.length > 0 ? s : DEFAULT_SUBJECTS);
       setPickups(p);
+      setAlerts(a);
     } catch (err) { console.error("Load timetable:", err); }
     setLoading(false);
   }
@@ -187,6 +191,7 @@ export default function TimetablePage() {
               const dayBlocks = blocks.filter((b) => b.day === dayKey);
               const isToday = nowDay === di + 1;
               const pickup = pickups[dayKey];
+              const dayAlerts = alerts.filter((a) => a.day === dayKey);
 
               return (
                 <div key={dayKey} style={{ flex: 1, minWidth: 0 }}>
@@ -213,6 +218,11 @@ export default function TimetablePage() {
                     {/* Blocks */}
                     {dayBlocks.map((b) => (
                       <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={handleBlockClick} />
+                    ))}
+
+                    {/* Alert markers (도보하원, 태권도 이동) */}
+                    {dayAlerts.map((a) => (
+                      <AlertMarker key={a.id} alert={a} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} nowMin={nowMin} />
                     ))}
 
                     {/* Pickup marker */}
@@ -285,6 +295,48 @@ function PickupMarker({ time, timeStart, pxPerMin, isToday }) {
         position: "absolute", top: -8, right: 2, fontSize: 8,
         color: "#FF6B35", fontWeight: 700, background: "#fff", padding: "0 2px",
       }}>{time}</span>
+    </div>
+  );
+}
+
+// ══════════════════════════════
+// Alert marker (도보하원, 태권도 이동)
+// ══════════════════════════════
+function AlertMarker({ alert, timeStart, pxPerMin, isToday, nowMin }) {
+  const alertMin = timeToMin(alert.time);
+  const top = (alertMin - timeStart) * pxPerMin;
+  const emoji = alert.emoji || "🔔";
+
+  // 오늘이고 10분 전 ~ 해당 시간 사이: 크게 표시
+  const isActive = isToday && nowMin >= alertMin - 10 && nowMin <= alertMin;
+
+  if (isActive) {
+    return (
+      <div style={{ position: "absolute", top: top - 14, left: -1, right: -1, zIndex: 8, pointerEvents: "none" }}>
+        <div style={{
+          background: "linear-gradient(135deg, #2980B9, #3498DB)",
+          borderRadius: 8, padding: "4px 0", textAlign: "center",
+          boxShadow: "0 2px 10px rgba(41,128,185,0.4)",
+          animation: "alertPulse 2s ease-in-out infinite",
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: "#fff", opacity: 0.85 }}>{emoji} {alert.name}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>{alert.time}</div>
+        </div>
+        <style>{`@keyframes alertPulse { 0%,100% { box-shadow: 0 2px 10px rgba(41,128,185,0.4); } 50% { box-shadow: 0 2px 18px rgba(41,128,185,0.7); } }`}</style>
+      </div>
+    );
+  }
+
+  // 평소: 파란 점선
+  return (
+    <div style={{
+      position: "absolute", top, left: 0, right: 0, zIndex: 6,
+      borderTop: "2px dashed #2980B980", pointerEvents: "none",
+    }}>
+      <span style={{
+        position: "absolute", top: -8, right: 2, fontSize: 8,
+        color: "#2980B9", fontWeight: 700, background: "#fff", padding: "0 2px",
+      }}>{alert.time}</span>
     </div>
   );
 }
