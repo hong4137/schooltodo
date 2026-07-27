@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
-import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts } from "../lib/timetable";
+import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm } from "../lib/timetable";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -35,52 +35,75 @@ export default function TimetablePage() {
   const [subjects, setSubjects] = useState([]);
   const [pickups, setPickups] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [activeTerm, setActiveTermState] = useState("");
+  const [terms, setTerms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editBlock, setEditBlock] = useState(null);
   const [showEdit, setShowEdit] = useState(false);
   const [showPickupEdit, setShowPickupEdit] = useState(false);
+  const [showTermPicker, setShowTermPicker] = useState(false);
 
-  useEffect(() => { if (user) load(); }, [user]);
+  useEffect(() => { if (user) loadInit(); }, [user]);
 
-  async function load() {
+  async function loadInit() {
+    try {
+      const term = await getActiveTerm(user.id);
+      setActiveTermState(term);
+      const t = await fetchTerms(user.id);
+      setTerms(t);
+      await loadData(term);
+    } catch (err) { console.error("Init:", err); }
+    setLoading(false);
+  }
+
+  async function loadData(term) {
     try {
       const [b, s, p, a] = await Promise.all([
-        fetchBlocks(user.id), fetchSubjects(user.id), fetchPickups(user.id), fetchAlerts(user.id),
+        fetchBlocks(user.id, term), fetchSubjects(user.id), fetchPickups(user.id, term), fetchAlerts(user.id, term),
       ]);
-      // Filter out alert-type blocks (도보하원, 태권도 이동) from regular blocks
       setBlocks(b.filter((bl) => !bl.name.includes("도보하원") && !bl.name.includes("이동")));
       setSubjects(s.length > 0 ? s : DEFAULT_SUBJECTS);
       setPickups(p);
       setAlerts(a);
     } catch (err) { console.error("Load timetable:", err); }
-    setLoading(false);
   }
 
-  // Compute time range from data
+  async function handleTermChange(term) {
+    setActiveTermState(term);
+    await setActiveTerm(user.id, term);
+    setLoading(true);
+    await loadData(term);
+    setLoading(false);
+    setShowTermPicker(false);
+    // Refresh terms list
+    const t = await fetchTerms(user.id);
+    setTerms(t);
+  }
+
   const { timeStart, timeEnd, pxPerMin, gridHeight } = useMemo(() => {
     if (blocks.length === 0) return { timeStart: 9 * 60, timeEnd: 16 * 60, pxPerMin: 1.4, gridHeight: 420 * 1.4 };
     const allTimes = [
       ...blocks.map((b) => timeToMin(b.start)),
       ...blocks.map((b) => timeToMin(b.end)),
       ...Object.values(pickups).map((p) => timeToMin(p.time)),
+      ...alerts.map((a) => timeToMin(a.time)),
     ];
     const earliest = Math.floor(Math.min(...allTimes) / 60) * 60;
     const latest = Math.ceil(Math.max(...allTimes) / 60) * 60;
     const total = latest - earliest;
     const px = Math.min(1.6, Math.max(0.9, 600 / total));
     return { timeStart: earliest, timeEnd: latest, pxPerMin: px, gridHeight: total * px };
-  }, [blocks, pickups]);
+  }, [blocks, pickups, alerts]);
 
   const hours = [];
   for (let h = Math.floor(timeStart / 60); h <= Math.floor(timeEnd / 60); h++) hours.push(h);
 
-  // Current time (KST)
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
   const nowMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   const showNowLine = nowMin >= timeStart && nowMin <= timeEnd;
   const nowTop = (nowMin - timeStart) * pxPerMin;
-  const nowDay = kst.getUTCDay(); // 0=sun
+  const nowDay = kst.getUTCDay();
 
   async function handleSave(data) {
     try {
@@ -88,7 +111,7 @@ export default function TimetablePage() {
         const updated = await updateBlock(data.id, data);
         setBlocks((prev) => prev.map((b) => b.id === data.id ? updated : b));
       } else {
-        const created = await createBlock({ ...data, user_id: user.id });
+        const created = await createBlock({ ...data, user_id: user.id, term: activeTerm });
         setBlocks((prev) => [...prev, created]);
       }
     } catch (err) { console.error("Save block:", err); alert("저장 실패"); }
@@ -96,10 +119,8 @@ export default function TimetablePage() {
   }
 
   async function handleDelete(data) {
-    try {
-      await deleteBlock(data.id);
-      setBlocks((prev) => prev.filter((b) => b.id !== data.id));
-    } catch (err) { console.error("Delete block:", err); }
+    try { await deleteBlock(data.id); setBlocks((prev) => prev.filter((b) => b.id !== data.id)); }
+    catch (err) { console.error("Delete block:", err); }
     setShowEdit(false);
   }
 
@@ -118,9 +139,6 @@ export default function TimetablePage() {
     setShowPickupEdit(false);
   }
 
-  function handleBlockClick(block) { setEditBlock(block); setShowEdit(true); }
-  function handleAdd() { setEditBlock(null); setShowEdit(true); }
-
   if (loading) return (
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "60vh" }}>
       <span style={{ color: "var(--text-muted)", fontSize: 14 }}>로딩 중...</span>
@@ -132,8 +150,11 @@ export default function TimetablePage() {
       {/* Header */}
       <div style={{ padding: "16px 16px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>2026년 1학기</div>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: "var(--text-primary)", margin: "2px 0 0" }}>시간표</h1>
+          <button onClick={() => setShowTermPicker(true)} style={{
+            fontSize: 12, color: "var(--text-muted)", fontWeight: 500, background: "none", border: "1px solid var(--border)",
+            borderRadius: 8, padding: "3px 10px", cursor: "pointer",
+          }}>📚 {activeTerm} ▾</button>
+          <h1 style={{ fontSize: 24, fontWeight: 800, color: "var(--text-primary)", margin: "4px 0 0" }}>시간표</h1>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setShowPickupEdit(true)} style={{
@@ -141,7 +162,7 @@ export default function TimetablePage() {
             background: "var(--surface)", fontSize: 18, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>🚗</button>
-          <button onClick={handleAdd} style={{
+          <button onClick={() => { setEditBlock(null); setShowEdit(true); }} style={{
             width: 40, height: 40, borderRadius: 12, border: "none", background: "#1A1A2E",
             color: "#fff", fontSize: 22, cursor: "pointer", display: "flex", alignItems: "center",
             justifyContent: "center", boxShadow: "0 2px 8px rgba(26,26,46,0.3)",
@@ -164,17 +185,17 @@ export default function TimetablePage() {
       </div>
 
       {/* Empty state */}
-      {blocks.length === 0 ? (
+      {blocks.length === 0 && alerts.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 16px" }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📅</div>
           <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>시간표가 비어있어요</h3>
-          <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}>+ 버튼을 눌러 수업을 추가해보세요</p>
+          <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.6 }}>
+            {activeTerm === "방학" ? "방학 스케줄을 추가해보세요" : "+ 버튼을 눌러 수업을 추가해보세요"}
+          </p>
         </div>
       ) : (
-        /* Grid */
         <div style={{ padding: "0 4px", overflowX: "auto" }}>
           <div style={{ display: "flex", minWidth: 0 }}>
-            {/* Time axis */}
             <div style={{ width: 34, flexShrink: 0, paddingTop: 32, position: "relative" }}>
               <div style={{ height: gridHeight, position: "relative" }}>
                 {hours.map((h) => (
@@ -184,8 +205,6 @@ export default function TimetablePage() {
                 ))}
               </div>
             </div>
-
-            {/* Day columns */}
             {DAY_KEYS.map((dayKey, di) => {
               const dayBlocks = blocks.filter((b) => b.day === dayKey);
               const isToday = nowDay === di + 1;
@@ -194,7 +213,6 @@ export default function TimetablePage() {
 
               return (
                 <div key={dayKey} style={{ flex: 1, minWidth: 0 }}>
-                  {/* Day header */}
                   <div style={{
                     textAlign: "center", padding: "6px 0 8px",
                     background: isToday ? "#1A1A2E" : "transparent",
@@ -202,43 +220,25 @@ export default function TimetablePage() {
                   }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: isToday ? "#fff" : "#666" }}>{DAYS[di]}</span>
                   </div>
-
-                  {/* Timeline column */}
                   <div style={{
                     position: "relative", height: gridHeight, margin: "0 1px",
-                    background: "#fff",
-                    borderRadius: 8, border: "1px solid #F0F0F0",
+                    background: "#fff", borderRadius: 8, border: "1px solid #F0F0F0",
                   }}>
-                    {/* Hour lines */}
                     {hours.map((h) => (
                       <div key={h} style={{ position: "absolute", top: (h * 60 - timeStart) * pxPerMin, left: 0, right: 0, borderTop: "1px solid #F0F0F0" }} />
                     ))}
-
-                    {/* Blocks */}
                     {dayBlocks.map((b) => (
-                      <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={handleBlockClick} />
+                      <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={(bl) => { setEditBlock(bl); setShowEdit(true); }} />
                     ))}
-
-                    {/* Alert markers (도보하원, 태권도 이동) */}
                     {dayAlerts.map((a) => (
                       <AlertMarker key={a.id} alert={a} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} nowMin={nowMin} />
                     ))}
-
-                    {/* Pickup marker */}
                     {pickup && (
                       <PickupMarker time={pickup.time} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} />
                     )}
-
-                    {/* Now line - only on today */}
                     {showNowLine && isToday && (
-                      <div style={{
-                        position: "absolute", top: nowTop, left: -2, right: -2,
-                        height: 2, background: "#FF3B30", zIndex: 10, borderRadius: 1,
-                      }}>
-                        <div style={{
-                          position: "absolute", left: -4, top: -3, width: 8, height: 8,
-                          borderRadius: "50%", background: "#FF3B30",
-                        }} />
+                      <div style={{ position: "absolute", top: nowTop, left: -2, right: -2, height: 2, background: "#FF3B30", zIndex: 10, borderRadius: 1 }}>
+                        <div style={{ position: "absolute", left: -4, top: -3, width: 8, height: 8, borderRadius: "50%", background: "#FF3B30" }} />
                       </div>
                     )}
                   </div>
@@ -255,6 +255,44 @@ export default function TimetablePage() {
       {showPickupEdit && (
         <PickupEditSheet pickups={pickups} onClose={() => setShowPickupEdit(false)} onSave={handlePickupSave} />
       )}
+      {showTermPicker && (
+        <TermPicker terms={terms} activeTerm={activeTerm} onSelect={handleTermChange} onClose={() => setShowTermPicker(false)} />
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════
+// Term Picker
+// ══════════════════════════════
+function TermPicker({ terms, activeTerm, onSelect, onClose }) {
+  const allTerms = [...new Set([...terms, activeTerm])].sort();
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)",
+        borderRadius: "20px 20px 0 0", padding: "20px 20px 32px",
+        animation: "sheetUp 0.3s ease",
+      }}>
+        <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
+        <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 16px" }}>📚 학기 선택</h3>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {allTerms.map((term) => (
+            <button key={term} onClick={() => onSelect(term)} style={{
+              padding: "14px 16px", fontSize: 15, fontWeight: activeTerm === term ? 700 : 400,
+              background: activeTerm === term ? "#1A1A2E" : "var(--surface)",
+              color: activeTerm === term ? "#fff" : "var(--text-primary)",
+              border: `1px solid ${activeTerm === term ? "#1A1A2E" : "var(--border)"}`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left",
+            }}>
+              {activeTerm === term && "✓ "}{term}
+            </button>
+          ))}
+        </div>
+      </div>
+      <style>{`@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
     </div>
   );
 }
@@ -265,16 +303,12 @@ export default function TimetablePage() {
 function PickupMarker({ time, timeStart, pxPerMin, isToday }) {
   const min = timeToMin(time) - timeStart;
   const top = min * pxPerMin;
-
   if (isToday) {
-    // Today: big highlighted marker
     return (
       <div style={{ position: "absolute", top: top - 14, left: -1, right: -1, zIndex: 8, pointerEvents: "none" }}>
         <div style={{
-          background: "linear-gradient(135deg, #FF6B35, #FF8C42)",
-          borderRadius: 8, padding: "4px 0", textAlign: "center",
-          boxShadow: "0 2px 10px rgba(255,107,53,0.4)",
-          animation: "pickupPulse 2s ease-in-out infinite",
+          background: "linear-gradient(135deg, #FF6B35, #FF8C42)", borderRadius: 8, padding: "4px 0", textAlign: "center",
+          boxShadow: "0 2px 10px rgba(255,107,53,0.4)", animation: "pickupPulse 2s ease-in-out infinite",
         }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#fff", opacity: 0.85 }}>🚗 픽업</div>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>{time}</div>
@@ -283,17 +317,9 @@ function PickupMarker({ time, timeStart, pxPerMin, isToday }) {
       </div>
     );
   }
-
-  // Other days: subtle line
   return (
-    <div style={{
-      position: "absolute", top, left: 0, right: 0, zIndex: 6,
-      borderTop: "2px dashed #FF6B3580", pointerEvents: "none",
-    }}>
-      <span style={{
-        position: "absolute", top: -8, right: 2, fontSize: 8,
-        color: "#FF6B35", fontWeight: 700, background: "#fff", padding: "0 2px",
-      }}>{time}</span>
+    <div style={{ position: "absolute", top, left: 0, right: 0, zIndex: 6, borderTop: "2px dashed #FF6B3580", pointerEvents: "none" }}>
+      <span style={{ position: "absolute", top: -8, right: 2, fontSize: 8, color: "#FF6B35", fontWeight: 700, background: "#fff", padding: "0 2px" }}>{time}</span>
     </div>
   );
 }
@@ -305,18 +331,14 @@ function AlertMarker({ alert, timeStart, pxPerMin, isToday, nowMin }) {
   const alertMin = timeToMin(alert.time);
   const top = (alertMin - timeStart) * pxPerMin;
   const emoji = alert.emoji || "🔔";
-
-  // 오늘이고 10분 전 ~ 해당 시간 사이: 크게 표시
   const isActive = isToday && nowMin >= alertMin - 10 && nowMin <= alertMin;
 
   if (isActive) {
     return (
       <div style={{ position: "absolute", top: top - 14, left: -1, right: -1, zIndex: 8, pointerEvents: "none" }}>
         <div style={{
-          background: "linear-gradient(135deg, #2980B9, #3498DB)",
-          borderRadius: 8, padding: "4px 0", textAlign: "center",
-          boxShadow: "0 2px 10px rgba(41,128,185,0.4)",
-          animation: "alertPulse 2s ease-in-out infinite",
+          background: "linear-gradient(135deg, #2980B9, #3498DB)", borderRadius: 8, padding: "4px 0", textAlign: "center",
+          boxShadow: "0 2px 10px rgba(41,128,185,0.4)", animation: "alertPulse 2s ease-in-out infinite",
         }}>
           <div style={{ fontSize: 9, fontWeight: 700, color: "#fff", opacity: 0.85 }}>{emoji} {alert.name}</div>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", letterSpacing: 0.5 }}>{alert.time}</div>
@@ -325,17 +347,9 @@ function AlertMarker({ alert, timeStart, pxPerMin, isToday, nowMin }) {
       </div>
     );
   }
-
-  // 평소: 파란 점선
   return (
-    <div style={{
-      position: "absolute", top, left: 0, right: 0, zIndex: 6,
-      borderTop: "2px dashed #2980B980", pointerEvents: "none",
-    }}>
-      <span style={{
-        position: "absolute", top: -8, right: 2, fontSize: 8,
-        color: "#2980B9", fontWeight: 700, background: "#fff", padding: "0 2px",
-      }}>{alert.time}</span>
+    <div style={{ position: "absolute", top, left: 0, right: 0, zIndex: 6, borderTop: "2px dashed #2980B980", pointerEvents: "none" }}>
+      <span style={{ position: "absolute", top: -8, right: 2, fontSize: 8, color: "#2980B9", fontWeight: 700, background: "#fff", padding: "0 2px" }}>{alert.time}</span>
     </div>
   );
 }
@@ -351,7 +365,6 @@ function TimetableBlock({ block, timeStart, pxPerMin, onClick }) {
   const isSmall = height < 40;
   const isTiny = height < 28;
   const isLunch = block.name === "점심";
-
   return (
     <div onClick={() => onClick?.(block)} style={{
       position: "absolute", top, left: 2, right: 2, height, borderRadius: 8,
@@ -361,18 +374,9 @@ function TimetableBlock({ block, timeStart, pxPerMin, onClick }) {
       padding: isTiny ? "1px 6px" : "3px 6px", cursor: "pointer", overflow: "hidden",
       display: "flex", flexDirection: isSmall ? "row" : "column",
       alignItems: isSmall ? "center" : "flex-start", gap: isSmall ? 4 : 0,
-      transition: "transform 0.1s",
     }}>
-      <span style={{
-        fontSize: isTiny ? 10 : 11, fontWeight: 700,
-        color: isLunch ? "#999" : block.color, lineHeight: 1.2,
-        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-      }}>{block.name}</span>
-      {!isTiny && (
-        <span style={{ fontSize: 9, color: isLunch ? "#BBB" : `${block.color}99`, lineHeight: 1.2, whiteSpace: "nowrap" }}>
-          {block.start}~{block.end}
-        </span>
-      )}
+      <span style={{ fontSize: isTiny ? 10 : 11, fontWeight: 700, color: isLunch ? "#999" : block.color, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{block.name}</span>
+      {!isTiny && <span style={{ fontSize: 9, color: isLunch ? "#BBB" : `${block.color}99`, lineHeight: 1.2, whiteSpace: "nowrap" }}>{block.start}~{block.end}</span>}
     </div>
   );
 }
@@ -387,45 +391,28 @@ function PickupEditSheet({ pickups, onClose, onSave }) {
     return init;
   });
   const [saving, setSaving] = useState(false);
-
   const timeOptions = [""];
   for (let m = 12 * 60; m <= 20 * 60; m += 10) timeOptions.push(minToTime(m));
-
-  async function handleSubmit() {
-    setSaving(true);
-    await onSave?.(times);
-    setSaving(false);
-  }
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
-      <div style={{
-        position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)",
-        borderRadius: "20px 20px 0 0", padding: "20px 20px 32px",
-        animation: "sheetUp 0.3s ease",
-      }}>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", animation: "sheetUp 0.3s ease" }}>
         <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>🚗 픽업 시간 설정</h3>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px" }}>요일별 픽업 시간을 입력하세요. 비우면 표시 안 돼요.</p>
-
+        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px" }}>요일별 픽업 시간을 입력하세요.</p>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {DAY_KEYS.map((d, i) => (
             <div key={d} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 28, fontSize: 15, fontWeight: 700, color: "var(--text-primary)", textAlign: "center" }}>{DAYS[i]}</span>
+              <span style={{ width: 28, fontSize: 15, fontWeight: 700, textAlign: "center" }}>{DAYS[i]}</span>
               <select value={times[d]} onChange={(e) => setTimes((prev) => ({ ...prev, [d]: e.target.value }))}
-                style={{
-                  flex: 1, padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)",
-                  borderRadius: 10, fontFamily: "inherit", color: times[d] ? "var(--text-primary)" : "var(--text-disabled)",
-                  background: "var(--surface)", appearance: "auto",
-                }}>
+                style={{ flex: 1, padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)", borderRadius: 10, fontFamily: "inherit", appearance: "auto" }}>
                 <option value="">없음</option>
                 {timeOptions.filter(Boolean).map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
           ))}
-
-          <button onClick={handleSubmit} disabled={saving} style={{
+          <button onClick={async () => { setSaving(true); await onSave(times); setSaving(false); }} disabled={saving} style={{
             width: "100%", padding: "14px 0", fontSize: 15, fontWeight: 700, color: "#fff",
             background: saving ? "#CCC" : "linear-gradient(135deg, #FF6B35, #FF8C42)",
             border: "none", borderRadius: 14, cursor: saving ? "default" : "pointer", marginTop: 4,
@@ -449,115 +436,59 @@ function EditSheet({ block, subjects, onClose, onSave, onDelete }) {
   const [category, setCategory] = useState(block?.category || "school");
   const [color, setColor] = useState(block?.color || "#4ECDC4");
   const [saving, setSaving] = useState(false);
-
   const timeOptions = [];
   for (let m = 7 * 60; m <= 21 * 60; m += 10) timeOptions.push(minToTime(m));
-
-  function applySubject(sub) { setName(sub.name); setColor(sub.color); }
-
-  async function handleSubmit() {
-    setSaving(true);
-    await onSave?.({ ...(block || {}), name, day, start, end, category, color });
-    setSaving(false);
-  }
-
-  const inputStyle = {
-    width: "100%", padding: "10px 12px", fontSize: 14,
-    border: "1px solid var(--border)", borderRadius: 10,
-    fontFamily: "inherit", color: "var(--text-primary)", background: "var(--surface)",
-  };
+  const inputStyle = { width: "100%", padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)", borderRadius: 10, fontFamily: "inherit", color: "var(--text-primary)", background: "var(--surface)" };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
-      <div style={{
-        position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)",
-        borderRadius: "20px 20px 0 0", padding: "20px 20px 32px",
-        maxHeight: "85vh", overflowY: "auto", animation: "sheetUp 0.3s ease",
-      }}>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", maxHeight: "85vh", overflowY: "auto", animation: "sheetUp 0.3s ease" }}>
         <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 16px" }}>{isNew ? "수업 추가" : "수업 수정"}</h3>
-
-        {/* Quick subject select */}
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>빠른 선택</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {subjects.map((s, i) => (
-              <button key={s.id || i} onClick={() => applySubject(s)} style={{
+              <button key={s.id || i} onClick={() => { setName(s.name); setColor(s.color); }} style={{
                 padding: "5px 12px", fontSize: 12, fontWeight: 600, border: "none", borderRadius: 20,
-                background: name === s.name ? s.color : `${s.color}20`,
-                color: name === s.name ? "#fff" : s.color, cursor: "pointer",
+                background: name === s.name ? s.color : `${s.color}20`, color: name === s.name ? "#fff" : s.color, cursor: "pointer",
               }}>{s.name}</button>
             ))}
           </div>
         </div>
-
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>과목명</div>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="과목명 입력" style={inputStyle} />
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>요일</div>
+          <div><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>과목명</div>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="과목명 입력" style={inputStyle} /></div>
+          <div><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>요일</div>
             <div style={{ display: "flex", gap: 6 }}>
               {DAY_KEYS.map((d, i) => (
-                <button key={d} onClick={() => setDay(d)} style={{
-                  flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600, border: "none", borderRadius: 10,
-                  background: day === d ? "#1A1A2E" : "var(--border-light)", color: day === d ? "#fff" : "#666", cursor: "pointer",
-                }}>{DAYS[i]}</button>
+                <button key={d} onClick={() => setDay(d)} style={{ flex: 1, padding: "8px 0", fontSize: 13, fontWeight: 600, border: "none", borderRadius: 10, background: day === d ? "#1A1A2E" : "var(--border-light)", color: day === d ? "#fff" : "#666", cursor: "pointer" }}>{DAYS[i]}</button>
               ))}
-            </div>
-          </div>
-
+            </div></div>
           <div style={{ display: "flex", gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>시작</div>
-              <select value={start} onChange={(e) => setStart(e.target.value)} style={{ ...inputStyle, appearance: "auto" }}>
-                {timeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>종료</div>
-              <select value={end} onChange={(e) => setEnd(e.target.value)} style={{ ...inputStyle, appearance: "auto" }}>
-                {timeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+            <div style={{ flex: 1 }}><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>시작</div>
+              <select value={start} onChange={(e) => setStart(e.target.value)} style={{ ...inputStyle, appearance: "auto" }}>{timeOptions.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
+            <div style={{ flex: 1 }}><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>종료</div>
+              <select value={end} onChange={(e) => setEnd(e.target.value)} style={{ ...inputStyle, appearance: "auto" }}>{timeOptions.map((t) => <option key={t} value={t}>{t}</option>)}</select></div>
           </div>
-
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>구분</div>
+          <div><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>구분</div>
             <div style={{ display: "flex", gap: 6 }}>
               {Object.entries(CATEGORIES).map(([key, cat]) => (
-                <button key={key} onClick={() => setCategory(key)} style={{
-                  flex: 1, padding: "8px 0", fontSize: 12, fontWeight: 600,
-                  border: `1.5px solid ${category === key ? "#1A1A2E" : cat.border}`,
-                  borderRadius: 10, background: category === key ? cat.bg : "#fff",
-                  color: category === key ? "#1A1A2E" : "#999", cursor: "pointer",
-                }}>{cat.label}</button>
+                <button key={key} onClick={() => setCategory(key)} style={{ flex: 1, padding: "8px 0", fontSize: 12, fontWeight: 600, border: `1.5px solid ${category === key ? "#1A1A2E" : cat.border}`, borderRadius: 10, background: category === key ? cat.bg : "#fff", color: category === key ? "#1A1A2E" : "#999", cursor: "pointer" }}>{cat.label}</button>
               ))}
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>색상</div>
+            </div></div>
+          <div><div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>색상</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {PRESET_COLORS.map((c) => (
-                <button key={c} onClick={() => setColor(c)} style={{
-                  width: 30, height: 30, borderRadius: "50%", padding: 0,
-                  border: color === c ? "3px solid #1A1A2E" : "2px solid #E0E0E0",
-                  background: c, cursor: "pointer",
-                }} />
+                <button key={c} onClick={() => setColor(c)} style={{ width: 30, height: 30, borderRadius: "50%", padding: 0, border: color === c ? "3px solid #1A1A2E" : "2px solid #E0E0E0", background: c, cursor: "pointer" }} />
               ))}
-            </div>
-          </div>
-
-          <button onClick={handleSubmit} disabled={!name || !start || !end || saving} style={{
+            </div></div>
+          <button onClick={async () => { setSaving(true); await onSave({ ...(block || {}), name, day, start, end, category, color }); setSaving(false); }} disabled={!name || saving} style={{
             width: "100%", padding: "14px 0", fontSize: 15, fontWeight: 700, color: "#fff",
             background: !name || saving ? "#CCC" : "linear-gradient(135deg, #1A1A2E, #2D2B55)",
             border: "none", borderRadius: 14, cursor: !name || saving ? "default" : "pointer", marginTop: 4,
           }}>{saving ? "저장 중..." : isNew ? "추가" : "저장"}</button>
-
           {!isNew && (
             <button onClick={() => { if (confirm("이 수업을 삭제할까요?")) onDelete?.(block); }} style={{
               width: "100%", padding: "12px 0", fontSize: 14, fontWeight: 600, color: "var(--red)",
