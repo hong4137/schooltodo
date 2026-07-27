@@ -1,11 +1,13 @@
 import { supabase } from "./supabase";
 
-export async function fetchBlocks(userId) {
-  const { data, error } = await supabase
+export async function fetchBlocks(userId, term) {
+  let query = supabase
     .from("timetable_blocks")
     .select("*")
     .eq("user_id", userId)
     .order("start_time", { ascending: true });
+  if (term) query = query.eq("term", term);
+  const { data, error } = await query;
   if (error) throw error;
   return (data || []).map((b) => ({
     ...b,
@@ -26,6 +28,7 @@ export async function createBlock(block) {
       category: block.category,
       color: block.color,
       memo: block.memo || null,
+      term: block.term || null,
     })
     .select()
     .single();
@@ -83,11 +86,13 @@ export async function deleteSubject(id) {
   if (error) throw error;
 }
 
-export async function fetchPickups(userId) {
-  const { data, error } = await supabase
+export async function fetchPickups(userId, term) {
+  let query = supabase
     .from("timetable_pickups")
     .select("*")
     .eq("user_id", userId);
+  if (term) query = query.eq("term", term);
+  const { data, error } = await query;
   if (error) throw error;
   return (data || []).reduce((acc, p) => {
     acc[p.day] = { ...p, time: p.pickup_time?.slice(0, 5) };
@@ -117,15 +122,45 @@ export async function deletePickup(userId, day) {
   if (error) throw error;
 }
 
-export async function fetchAlerts(userId) {
-  const { data, error } = await supabase
+export async function fetchAlerts(userId, term) {
+  let query = supabase
     .from("timetable_alerts")
     .select("*")
     .eq("user_id", userId)
     .eq("is_active", true);
+  if (term) query = query.eq("term", term);
+  const { data, error } = await query;
   if (error) throw error;
   return (data || []).map((a) => ({
     ...a,
     time: a.alert_time?.slice(0, 5),
   }));
+}
+
+export async function fetchTerms(userId) {
+  const { data, error } = await supabase
+    .from("timetable_blocks")
+    .select("term")
+    .eq("user_id", userId);
+  if (error) throw error;
+  const terms = [...new Set((data || []).map((d) => d.term).filter(Boolean))];
+  return terms.sort();
+}
+
+export async function getActiveTerm(userId) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("active_term")
+    .eq("id", userId)
+    .single();
+  if (error) throw error;
+  return data?.active_term || "1학년1학기";
+}
+
+export async function setActiveTerm(userId, term) {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ active_term: term })
+    .eq("id", userId);
+  if (error) throw error;
 }
