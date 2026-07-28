@@ -1,6 +1,6 @@
 // SchoolToDo Service Worker - PWA + Push Notifications
 
-const CACHE_NAME = "schooltodo-v1";
+const CACHE_NAME = "schooltodo-v2";
 const STATIC_ASSETS = [
   "/schooltodo/",
   "/schooltodo/index.html",
