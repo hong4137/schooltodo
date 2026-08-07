@@ -139,12 +139,32 @@ export async function fetchAlerts(userId, term) {
 
 export async function fetchTerms(userId) {
   const { data, error } = await supabase
-    .from("timetable_blocks")
-    .select("term")
-    .eq("user_id", userId);
+    .from("timetable_terms")
+    .select("*")
+    .eq("user_id", userId)
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
   if (error) throw error;
-  const terms = [...new Set((data || []).map((d) => d.term).filter(Boolean))];
-  return terms.sort();
+  return (data || []).map((t) => t.name);
+}
+
+export async function createTerm(userId, name) {
+  const { data, error } = await supabase
+    .from("timetable_terms")
+    .insert({ user_id: userId, name })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteTerm(userId, name) {
+  const { error } = await supabase
+    .from("timetable_terms")
+    .delete()
+    .eq("user_id", userId)
+    .eq("name", name);
+  if (error) throw error;
 }
 
 export async function getActiveTerm(userId) {
