@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
-import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm } from "../lib/timetable";
+import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm, createTerm, deleteTerm } from "../lib/timetable";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -75,9 +75,27 @@ export default function TimetablePage() {
     await loadData(term);
     setLoading(false);
     setShowTermPicker(false);
-    // Refresh terms list
-    const t = await fetchTerms(user.id);
-    setTerms(t);
+  }
+
+  async function handleTermAdd(name) {
+    try {
+      await createTerm(user.id, name);
+      const t = await fetchTerms(user.id);
+      setTerms(t);
+    } catch (err) {
+      console.error("Add term:", err);
+      alert("이미 있는 학기이거나 추가에 실패했어요.");
+    }
+  }
+
+  async function handleTermDelete(name) {
+    if (name === activeTerm) { alert("현재 사용 중인 학기는 삭제할 수 없어요."); return; }
+    if (!confirm(`'${name}' 학기를 목록에서 지울까요?\n(시간표 데이터는 남아있어요)`)) return;
+    try {
+      await deleteTerm(user.id, name);
+      const t = await fetchTerms(user.id);
+      setTerms(t);
+    } catch (err) { console.error("Delete term:", err); }
   }
 
   const { timeStart, timeEnd, pxPerMin, gridHeight } = useMemo(() => {
@@ -256,7 +274,7 @@ export default function TimetablePage() {
         <PickupEditSheet pickups={pickups} onClose={() => setShowPickupEdit(false)} onSave={handlePickupSave} />
       )}
       {showTermPicker && (
-        <TermPicker terms={terms} activeTerm={activeTerm} onSelect={handleTermChange} onClose={() => setShowTermPicker(false)} />
+        <TermPicker terms={terms} activeTerm={activeTerm} onSelect={handleTermChange} onAdd={handleTermAdd} onDelete={handleTermDelete} onClose={() => setShowTermPicker(false)} />
       )}
     </div>
   );
@@ -265,8 +283,18 @@ export default function TimetablePage() {
 // ══════════════════════════════
 // Term Picker
 // ══════════════════════════════
-function TermPicker({ terms, activeTerm, onSelect, onClose }) {
-  const allTerms = [...new Set([...terms, activeTerm])].sort();
+function TermPicker({ terms, activeTerm, onSelect, onAdd, onDelete, onClose }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const allTerms = [...new Set([...terms, activeTerm])];
+
+  async function submitAdd() {
+    const name = newName.trim();
+    if (!name) return;
+    await onAdd(name);
+    setNewName("");
+    setAdding(false);
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
@@ -274,22 +302,49 @@ function TermPicker({ terms, activeTerm, onSelect, onClose }) {
       <div style={{
         position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)",
         borderRadius: "20px 20px 0 0", padding: "20px 20px 32px",
-        animation: "sheetUp 0.3s ease",
+        maxHeight: "80vh", overflowY: "auto", animation: "sheetUp 0.3s ease",
       }}>
         <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 16px" }}>📚 학기 선택</h3>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {allTerms.map((term) => (
-            <button key={term} onClick={() => onSelect(term)} style={{
-              padding: "14px 16px", fontSize: 15, fontWeight: activeTerm === term ? 700 : 400,
-              background: activeTerm === term ? "#1A1A2E" : "var(--surface)",
-              color: activeTerm === term ? "#fff" : "var(--text-primary)",
-              border: `1px solid ${activeTerm === term ? "#1A1A2E" : "var(--border)"}`,
-              borderRadius: 12, cursor: "pointer", textAlign: "left",
-            }}>
-              {activeTerm === term && "✓ "}{term}
-            </button>
+            <div key={term} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button onClick={() => onSelect(term)} style={{
+                flex: 1, padding: "14px 16px", fontSize: 15, fontWeight: activeTerm === term ? 700 : 400,
+                background: activeTerm === term ? "#1A1A2E" : "var(--surface)",
+                color: activeTerm === term ? "#fff" : "var(--text-primary)",
+                border: `1px solid ${activeTerm === term ? "#1A1A2E" : "var(--border)"}`,
+                borderRadius: 12, cursor: "pointer", textAlign: "left",
+              }}>
+                {activeTerm === term && "✓ "}{term}
+              </button>
+              {activeTerm !== term && (
+                <button onClick={() => onDelete(term)} style={{
+                  width: 36, height: 36, borderRadius: 10, border: "1px solid var(--border)",
+                  background: "var(--surface)", color: "var(--text-disabled)", fontSize: 13, cursor: "pointer",
+                }}>✕</button>
+              )}
+            </div>
           ))}
+
+          {adding ? (
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus
+                onKeyDown={(e) => { if (e.key === "Enter") submitAdd(); }}
+                placeholder="예: 1학년2학기"
+                style={{ flex: 1, padding: "13px 14px", fontSize: 15, border: "1px solid var(--border)", borderRadius: 12, fontFamily: "inherit", background: "var(--surface)" }} />
+              <button onClick={submitAdd} disabled={!newName.trim()} style={{
+                padding: "0 18px", fontSize: 14, fontWeight: 700, color: "#fff",
+                background: newName.trim() ? "#1A1A2E" : "#CCC", border: "none", borderRadius: 12,
+                cursor: newName.trim() ? "pointer" : "default",
+              }}>추가</button>
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)} style={{
+              padding: "13px 16px", fontSize: 14, fontWeight: 600, color: "var(--text-secondary)",
+              background: "none", border: "1px dashed #CED4DA", borderRadius: 12, cursor: "pointer", marginTop: 4,
+            }}>+ 학기 추가</button>
+          )}
         </div>
       </div>
       <style>{`@keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
