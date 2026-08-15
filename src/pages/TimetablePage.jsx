@@ -107,7 +107,8 @@ export default function TimetablePage() {
       ...alerts.map((a) => timeToMin(a.time)),
     ];
     const earliest = Math.floor(Math.min(...allTimes) / 60) * 60;
-    const latest = Math.ceil(Math.max(...allTimes) / 60) * 60;
+    // 마지막 마커(픽업 등)가 잘리지 않도록 아래쪽 여유 30분
+    const latest = Math.ceil((Math.max(...allTimes) + 30) / 60) * 60;
     const total = latest - earliest;
     const px = Math.min(1.6, Math.max(0.9, 600 / total));
     return { timeStart: earliest, timeEnd: latest, pxPerMin: px, gridHeight: total * px };
@@ -371,7 +372,11 @@ function PickupMarker({ time, timeStart, pxPerMin, highlight }) {
   }
   return (
     <div style={{ position: "absolute", top, left: 0, right: 0, zIndex: 6, borderTop: "2px dashed #FF6B3580", pointerEvents: "none" }}>
-      <span style={{ position: "absolute", top: -8, right: 2, fontSize: 8, color: "#FF6B35", fontWeight: 700, background: "#fff", padding: "0 2px" }}>{time}</span>
+      <span style={{
+        position: "absolute", top: -9, right: 1, fontSize: 8, lineHeight: "16px", height: 16,
+        color: "#fff", fontWeight: 700, background: "#FF6B35", padding: "0 5px", borderRadius: 8,
+        whiteSpace: "nowrap",
+      }}>🚗 {time}</span>
     </div>
   );
 }
@@ -399,9 +404,14 @@ function AlertMarker({ alert, timeStart, pxPerMin, isToday, nowMin }) {
       </div>
     );
   }
+  const short = alert.name.includes("이동") ? "이동" : alert.name;
   return (
     <div style={{ position: "absolute", top, left: 0, right: 0, zIndex: 6, borderTop: "2px dashed #2980B980", pointerEvents: "none" }}>
-      <span style={{ position: "absolute", top: -8, right: 2, fontSize: 8, color: "#2980B9", fontWeight: 700, background: "#fff", padding: "0 2px" }}>{alert.time}</span>
+      <span style={{
+        position: "absolute", top: -9, right: 1, fontSize: 8, lineHeight: "16px", height: 16,
+        color: "#fff", fontWeight: 700, background: "#2980B9", padding: "0 5px", borderRadius: 8,
+        whiteSpace: "nowrap",
+      }}>{emoji} {short} {alert.time}</span>
     </div>
   );
 }
