@@ -100,12 +100,12 @@ export async function fetchPickups(userId, term) {
   }, {});
 }
 
-export async function upsertPickup(userId, day, time, memo) {
+export async function upsertPickup(userId, day, time, term, memo) {
   const { data, error } = await supabase
     .from("timetable_pickups")
     .upsert(
-      { user_id: userId, day, pickup_time: time + ":00", memo: memo || null },
-      { onConflict: "user_id,day" }
+      { user_id: userId, day, pickup_time: time + ":00", term: term || null, memo: memo || null },
+      { onConflict: "user_id,day,term" }
     )
     .select()
     .single();
@@ -113,12 +113,14 @@ export async function upsertPickup(userId, day, time, memo) {
   return { ...data, time: data.pickup_time?.slice(0, 5) };
 }
 
-export async function deletePickup(userId, day) {
-  const { error } = await supabase
+export async function deletePickup(userId, day, term) {
+  let q = supabase
     .from("timetable_pickups")
     .delete()
     .eq("user_id", userId)
     .eq("day", day);
+  if (term) q = q.eq("term", term);
+  const { error } = await q;
   if (error) throw error;
 }
 
