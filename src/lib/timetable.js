@@ -90,12 +90,38 @@ export async function fetchPickups(userId, term) {
   let query = supabase
     .from("timetable_pickups")
     .select("*")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .order("pickup_time", { ascending: true });
   if (term) query = query.eq("term", term);
   const { data, error } = await query;
   if (error) throw error;
   return (data || []).reduce((acc, p) => {
-    acc[p.day] = { ...p, time: p.pickup_time?.slice(0, 5) };
+    const item = { ...p, time: p.pickup_time?.slice(0, 5) };
+    (acc[p.day] = acc[p.day] || []).push(item);
+    return acc;
+  }, {});
+}
+
+// timesByDay: { mon: ["16:40","18:00"], tue: ["17:40"], ... }
+export async function savePickups(userId, term, timesByDay) {
+  let del = supabase.from("timetable_pickups").delete().eq("user_id", userId);
+  del = term ? del.eq("term", term) : del.is("term", null);
+  const { error: delErr } = await del;
+  if (delErr) throw delErr;
+
+  const rows = [];
+  for (const [day, times] of Object.entries(timesByDay)) {
+    for (const t of [...new Set((times || []).filter(Boolean))]) {
+      rows.push({ user_id: userId, day, pickup_time: t + ":00", term: term || null });
+    }
+  }
+  if (rows.length === 0) return {};
+
+  const { data, error } = await supabase.from("timetable_pickups").insert(rows).select();
+  if (error) throw error;
+  return (data || []).reduce((acc, p) => {
+    const item = { ...p, time: p.pickup_time?.slice(0, 5) };
+    (acc[p.day] = acc[p.day] || []).push(item);
     return acc;
   }, {});
 }
