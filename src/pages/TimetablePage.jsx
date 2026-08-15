@@ -146,10 +146,10 @@ export default function TimetablePage() {
     try {
       for (const [day, time] of Object.entries(data)) {
         if (time) {
-          const result = await upsertPickup(user.id, day, time);
+          const result = await upsertPickup(user.id, day, time, activeTerm);
           setPickups((prev) => ({ ...prev, [day]: result }));
         } else {
-          await deletePickup(user.id, day);
+          await deletePickup(user.id, day, activeTerm);
           setPickups((prev) => { const n = { ...prev }; delete n[day]; return n; });
         }
       }
