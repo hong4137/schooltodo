@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
-import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, upsertPickup, deletePickup, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm, createTerm, deleteTerm } from "../lib/timetable";
+import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, savePickups, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm, createTerm, deleteTerm } from "../lib/timetable";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -103,7 +103,7 @@ export default function TimetablePage() {
     const allTimes = [
       ...blocks.map((b) => timeToMin(b.start)),
       ...blocks.map((b) => timeToMin(b.end)),
-      ...Object.values(pickups).map((p) => timeToMin(p.time)),
+      ...Object.values(pickups).flat().map((p) => timeToMin(p.time)),
       ...alerts.map((a) => timeToMin(a.time)),
     ];
     const earliest = Math.floor(Math.min(...allTimes) / 60) * 60;
@@ -144,15 +144,8 @@ export default function TimetablePage() {
 
   async function handlePickupSave(data) {
     try {
-      for (const [day, time] of Object.entries(data)) {
-        if (time) {
-          const result = await upsertPickup(user.id, day, time, activeTerm);
-          setPickups((prev) => ({ ...prev, [day]: result }));
-        } else {
-          await deletePickup(user.id, day, activeTerm);
-          setPickups((prev) => { const n = { ...prev }; delete n[day]; return n; });
-        }
-      }
+      const saved = await savePickups(user.id, activeTerm, data);
+      setPickups(saved);
     } catch (err) { console.error("Pickup save:", err); alert("저장 실패"); }
     setShowPickupEdit(false);
   }
@@ -226,8 +219,12 @@ export default function TimetablePage() {
             {DAY_KEYS.map((dayKey, di) => {
               const dayBlocks = blocks.filter((b) => b.day === dayKey);
               const isToday = nowDay === di + 1;
-              const pickup = pickups[dayKey];
+              const dayPickups = pickups[dayKey] || [];
               const dayAlerts = alerts.filter((a) => a.day === dayKey);
+              // 오늘이면 아직 안 지난 첫 픽업만 강조
+              const nextPickupTime = isToday
+                ? (dayPickups.find((p) => timeToMin(p.time) >= nowMin)?.time ?? null)
+                : null;
 
               return (
                 <div key={dayKey} style={{ flex: 1, minWidth: 0 }}>
@@ -251,9 +248,9 @@ export default function TimetablePage() {
                     {dayAlerts.map((a) => (
                       <AlertMarker key={a.id} alert={a} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} nowMin={nowMin} />
                     ))}
-                    {pickup && (
-                      <PickupMarker time={pickup.time} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} />
-                    )}
+                    {dayPickups.map((p) => (
+                      <PickupMarker key={p.id} time={p.time} timeStart={timeStart} pxPerMin={pxPerMin} highlight={p.time === nextPickupTime} />
+                    ))}
                     {showNowLine && isToday && (
                       <div style={{ position: "absolute", top: nowTop, left: -2, right: -2, height: 2, background: "#FF3B30", zIndex: 10, borderRadius: 1 }}>
                         <div style={{ position: "absolute", left: -4, top: -3, width: 8, height: 8, borderRadius: "50%", background: "#FF3B30" }} />
@@ -355,10 +352,10 @@ function TermPicker({ terms, activeTerm, onSelect, onAdd, onDelete, onClose }) {
 // ══════════════════════════════
 // Pickup marker
 // ══════════════════════════════
-function PickupMarker({ time, timeStart, pxPerMin, isToday }) {
+function PickupMarker({ time, timeStart, pxPerMin, highlight }) {
   const min = timeToMin(time) - timeStart;
   const top = min * pxPerMin;
-  if (isToday) {
+  if (highlight) {
     return (
       <div style={{ position: "absolute", top: top - 14, left: -1, right: -1, zIndex: 8, pointerEvents: "none" }}>
         <div style={{
@@ -442,29 +439,60 @@ function TimetableBlock({ block, timeStart, pxPerMin, onClick }) {
 function PickupEditSheet({ pickups, onClose, onSave }) {
   const [times, setTimes] = useState(() => {
     const init = {};
-    DAY_KEYS.forEach((d) => { init[d] = pickups[d]?.time || ""; });
+    DAY_KEYS.forEach((d) => { init[d] = (pickups[d] || []).map((p) => p.time); });
     return init;
   });
   const [saving, setSaving] = useState(false);
-  const timeOptions = [""];
+  const timeOptions = [];
   for (let m = 12 * 60; m <= 20 * 60; m += 10) timeOptions.push(minToTime(m));
+
+  function setAt(day, idx, val) {
+    setTimes((prev) => {
+      const arr = [...(prev[day] || [])];
+      arr[idx] = val;
+      return { ...prev, [day]: arr };
+    });
+  }
+  function removeAt(day, idx) {
+    setTimes((prev) => ({ ...prev, [day]: (prev[day] || []).filter((_, i) => i !== idx) }));
+  }
+  function addAt(day) {
+    setTimes((prev) => ({ ...prev, [day]: [...(prev[day] || []), "16:00"] }));
+  }
+
+  const selStyle = {
+    flex: 1, padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)",
+    borderRadius: 10, fontFamily: "inherit", appearance: "auto", background: "var(--surface)",
+  };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90 }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.4)" }} />
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", animation: "sheetUp 0.3s ease" }}>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "var(--bg)", borderRadius: "20px 20px 0 0", padding: "20px 20px 32px", maxHeight: "85vh", overflowY: "auto", animation: "sheetUp 0.3s ease" }}>
         <div style={{ width: 40, height: 4, background: "var(--border)", borderRadius: 2, margin: "0 auto 16px" }} />
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>🚗 픽업 시간 설정</h3>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px" }}>요일별 픽업 시간을 입력하세요.</p>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "0 0 16px" }}>요일마다 여러 번 추가할 수 있어요.</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {DAY_KEYS.map((d, i) => (
-            <div key={d} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ width: 28, fontSize: 15, fontWeight: 700, textAlign: "center" }}>{DAYS[i]}</span>
-              <select value={times[d]} onChange={(e) => setTimes((prev) => ({ ...prev, [d]: e.target.value }))}
-                style={{ flex: 1, padding: "10px 12px", fontSize: 14, border: "1px solid var(--border)", borderRadius: 10, fontFamily: "inherit", appearance: "auto" }}>
-                <option value="">없음</option>
-                {timeOptions.filter(Boolean).map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+            <div key={d} style={{ display: "flex", gap: 10 }}>
+              <span style={{ width: 28, paddingTop: 11, fontSize: 15, fontWeight: 700, textAlign: "center", flexShrink: 0 }}>{DAYS[i]}</span>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                {(times[d] || []).map((t, idx) => (
+                  <div key={idx} style={{ display: "flex", gap: 6 }}>
+                    <select value={t} onChange={(e) => setAt(d, idx, e.target.value)} style={selStyle}>
+                      {timeOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <button onClick={() => removeAt(d, idx)} style={{
+                      width: 40, borderRadius: 10, border: "1px solid var(--border)",
+                      background: "var(--surface)", color: "var(--text-disabled)", fontSize: 13, cursor: "pointer",
+                    }}>✕</button>
+                  </div>
+                ))}
+                <button onClick={() => addAt(d)} style={{
+                  padding: "8px 0", fontSize: 13, fontWeight: 600, color: "var(--text-secondary)",
+                  background: "none", border: "1px dashed #CED4DA", borderRadius: 10, cursor: "pointer",
+                }}>+ 픽업 추가</button>
+              </div>
             </div>
           ))}
           <button onClick={async () => { setSaving(true); await onSave(times); setSaving(false); }} disabled={saving} style={{
