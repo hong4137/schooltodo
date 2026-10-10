@@ -38,6 +38,7 @@ Telegram ─webhook─▶ Worker
 | `add_block` / `update_block` / `delete_block` | 시간표 블록 추가·수정·삭제 ("수요일 바이올린 13:00~14:20 음악실"). 삭제·시간 변경은 저장 전 되묻기 |
 | `set_pickups(day, times[])` / `add_alert` / `delete_alert` | 픽업 시각, 정각 알림 |
 | `set_active_term(name)` / `list_terms()` | 학기 전환 ("다음 주부터 2학기 시간표") |
+| `add_exception` / `list_exceptions` / `delete_exception` | **날짜별 예외**: 특정 수업·픽업·알림을 그날만 쉼 / 시간 변경 / 일회성 추가 ("이번 주 피아노 쉬어", "내일 태권도 5시로", "금요일 4시 치과") |
 | `get_days_off(range)` / `add_day_off(start, end, reason)` | 쉬는 날 |
 | `search_documents(query)` | 보관된 알림장 검색 → 제목·요약·사진 URL |
 | `show_draft()` / `edit_draft(patch)` / `save_draft()` / `discard_draft()` | 사진 분석 초안 |
@@ -51,6 +52,28 @@ Telegram ─webhook─▶ Worker
 3. 봇이 초안을 번호 매겨 보여주고 인라인 버튼 `[✅ 저장] [❌ 취소]`
 4. 사용자가 텍스트로 고치면 `edit_draft` → 다시 보여줌. 버튼은 `callback_query` 로 처리
 5. 저장 시 `add_tasks` 와 같은 경로(중복 검사 포함)
+
+### 날짜별 예외 (schedule_exceptions)
+
+매주 반복되는 시간표 위에 "그날만" 다른 것을 얹는다. `days_off` 가 하루 통째로 쉬는 것이라면 이건 수업 하나 단위.
+
+```sql
+CREATE TABLE schedule_exceptions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid,                        -- NULL = 가족 공용
+  start_date  date NOT NULL,
+  end_date    date NOT NULL,
+  target_type varchar(10) NOT NULL,        -- block | pickup | alert | oneoff
+  target_id   uuid,                        -- block/pickup/alert 의 id (oneoff 면 NULL)
+  action      varchar(10) NOT NULL,        -- skip | move | add
+  new_start   time, new_end  time,         -- move/add 일 때
+  name        varchar(100),                -- add 일 때 (예: 치과)
+  reason      varchar(100),
+  created_by  uuid, created_at timestamptz DEFAULT now()
+);
+```
+
+반영되는 곳: Worker 픽업·정각 알림(skip/move), 웹 시간표 오늘 칸(취소선·변경 표시)·캘린더 점, 네스트 브리핑 한 줄. 봇은 저장 전 "화(10/14)·목(10/16) 피아노 쉼으로 둘까요?" 확인.
 
 ### 대화 상태
 
@@ -95,7 +118,7 @@ CREATE TABLE bot_conversations (
 |---|---|---|
 | V2-1 | 대화 상태 표 + Claude tool use 로 텍스트 명령 전부 대체 (`classifyIntent`·`handleTextTask`·`handleSmartDelete`·`handleCompleteTask`·`handleDayOff` 제거) | Worker 400줄 교체, SQL 1개 |
 | V2-2 | 사진 → 초안 → 확인/수정 → 저장. 인라인 버튼 | Worker 200줄, `upload_sessions.draft` 컬럼 |
-| V2-3 | 시간표·픽업·정각 알림·학기 **조회+편집** 도구, 쉬는 날·보관함 질의 | Worker 250줄 |
+| V2-3 | 시간표·픽업·정각 알림·학기 **조회+편집** 도구, **날짜별 예외**(schedule_exceptions + Worker 알림 반영 + 시간표 표시), 쉬는 날·보관함 질의 | Worker 350줄, SQL 1개, 웹 시간표 수정 |
 | V2-4 | 되묻기 품질 다듬기, 사용량 상한, 가족 변경 알림 | 소 |
 
 V2-1 만 해도 "질문에 대답"이 되고, V2-2 가 "제대로 입력됐는지 서로 확인"이다.
