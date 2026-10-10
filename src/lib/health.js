@@ -22,6 +22,26 @@ export async function fetchHealth() {
   return { status, runs: runsRes.data || [] };
 }
 
+// AI 비서 사용량 (bot_usage, KST 날짜별). Sonnet 5.5 단가로 추정 비용 계산
+const PRICE = { input: 2 / 1e6, cache_read: 0.2 / 1e6, output: 10 / 1e6 };
+
+export async function fetchBotUsage(fromDay) {
+  const { data, error } = await supabase
+    .from("bot_usage")
+    .select("day,calls,input_tokens,cache_read,output_tokens")
+    .gte("day", fromDay)
+    .order("day", { ascending: false });
+  if (error) throw error;
+  const rows = data || [];
+  const sum = rows.reduce((a, r) => ({
+    calls: a.calls + (r.calls || 0), input: a.input + Number(r.input_tokens || 0),
+    cache: a.cache + Number(r.cache_read || 0), output: a.output + Number(r.output_tokens || 0),
+  }), { calls: 0, input: 0, cache: 0, output: 0 });
+  const uncached = Math.max(0, sum.input - sum.cache);
+  const usd = uncached * PRICE.input + sum.cache * PRICE.cache_read + sum.output * PRICE.output;
+  return { rows, sum, usd };
+}
+
 export function minutesAgo(iso) {
   if (!iso) return null;
   return Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));

@@ -38,7 +38,7 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 - 근거: `COMPLETE_KEYWORDS.some(kw => lowerText.includes(kw))` 가 먼저 걸리고, 세션이 없으면 아무 답 없이 `return OK`. "서류 제출 완료했어", "숙제 끝"이 전부 무응답. 세션이 있을 때 보낸 일반 텍스트도 무시된다.
 - 제안: 세션이 없으면 키워드 분기를 건너뛰고 `classifyIntent` 로. 세션 중 일반 텍스트에는 "사진 분석 중이에요. 완료/취소를 보내주세요" 안내.
 
-### B3. 같은 알림장을 두 번 보내면 할 일이 중복된다
+### B3. 같은 알림장을 두 번 보내면 할 일이 중복된다 — ✅ v2-2 (find_similar_tasks 로 건너뜀)
 - 근거: 저장 전 중복 검사 없음. DB 에 `find_similar_tasks(user_id, title, due_date)` 함수가 있는데 호출부가 없다.
 - 제안: 저장 전 호출해서 같은 날짜·유사 제목이면 건너뛰고 결과 메시지에 "(이미 있음 N개)" 표시.
 
@@ -50,7 +50,7 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 - 근거: 누구나 Worker URL 로 가짜 update 를 POST 하면 봇이 반응한다. `/test-briefing` 은 GET 한 번으로 Google Tasks 에 글을 만든다.
 - 제안: Telegram `setWebhook` 의 `secret_token` 을 쓰고 `X-Telegram-Bot-Api-Secret-Token` 헤더 검사. `/test-briefing` 은 `?key=` 비밀값 요구.
 
-### B6. `/today` 와 알림장 파싱이 UTC 날짜를 쓴다
+### B6. `/today` 와 알림장 파싱이 UTC 날짜를 쓴다 — ✅ v2-4
 - 근거: `handleToday()` 157행, `callOpenAI()` 450행의 `new Date().toISOString()`. 밤 9시 이후 `/today` 는 내일 것을 보여주고, AI 에게 알려주는 "오늘"이 하루 밀려 "이번 주 금요일까지" 같은 상대 날짜가 틀어진다.
 - 제안: `getKSTDateString()` 이 이미 있으니 그걸로 교체.
 
@@ -64,7 +64,7 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 - 근거: `tasks.js` `fetchTasks()` 의 select 에 `documents!inner(...)` 가 있다. inner 조인이라 `document_id` 가 NULL 인 할 일(텔레그램 텍스트 입력, 웹에서 직접 추가)은 결과에서 제외된다. 지금은 같은 테이블을 두 번 embed 해서 쿼리가 에러 → fallback 으로 살아나는 듯하지만 우연에 기댄 상태.
 - 제안: `documents(title, uploaded_by, user_telegrams(display_name))` 한 번만, inner 없이.
 
-### C3. 시간표에 휴일·오늘 수업 없음이 안 보인다
+### C3. 시간표에 휴일·오늘 수업 없음이 안 보인다 — ✅ 1단계(배너) + v2-3(예외 표시)
 - A1 과 함께. 오늘 칸 강조는 있으니 `days_off` 면 "쉬는 날" 배지.
 
 ### C4. 완료 항목 펼침 높이가 카드 수 × 120px 고정

@@ -5,6 +5,7 @@
 //   고치는 말("2번은 금요일로")은 assistant.js 가 set_draft_tasks 도구로 처리하고, 저장은 saveDraft().
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
+import { notifyFamily } from "./family.js";
 
 const MODEL = "claude-sonnet-5-5";
 const PRIORITY_EMOJI = { high: "🔴", medium: "🟡", low: "🟢" };
@@ -393,6 +394,13 @@ export async function saveDraft(env, deps, { session, userTg }) {
     });
     if (Array.isArray(rows) && rows[0]) changes.push(c);
     else console.error("schedule_exceptions insert failed:", rows && rows.message);
+  }
+  if (changes.length) {
+    const who = await q(env, deps, "user_telegrams", { query: `?id=eq.${session.telegram_id}&select=display_name` });
+    await notifyFamily(env, deps, {
+      exceptChatId: session.chat_id, actorName: Array.isArray(who) && who[0] ? who[0].display_name : null,
+      text: `알림장에서 시간표 변경을 등록했어요: ${changes.map(describeChange).join(", ")}`,
+    });
   }
 
   await patchSession(env, deps, session.id, { status: "completed" });

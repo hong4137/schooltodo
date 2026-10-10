@@ -11,7 +11,7 @@
 - **텔레그램 연동 코드(`/link` + 코드)는 구현돼 있다.** DB 에 `link_codes` 테이블과 `generate_link_code`·`verify_link_code` 함수가 있고, 웹·Worker 호출부도 있다. 10장 4번은 완료 항목.
 - **SQL 기준선 확보.** 누락된 001~003·006~017 원본은 사라졌지만, 운영 DB 를 `pg_dump` 로 받아 `sql/migrations/000_baseline_2026-10-10.sql` 에 넣었다(테이블 16개·함수 6개·정책 20개). 덤프 절차는 `sql/migrations/README.md`.
 - **Apps Script 사본은 아직 없다.** Google Apps Script 편집기에서 `briefing.gs` 를 복사해 `apps-script/` 에 넣어야 한다.
-- `toISOString()` 잔존: Worker `handleToday()`(157행)·`callOpenAI()`(450행)는 여전히 UTC 날짜를 쓴다. 미수정.
+- `toISOString()` 잔존 건은 v2-4 에서 해소(handleToday KST, callOpenAI 삭제).
 
 ---
 
@@ -288,6 +288,14 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - 봇 예시: "이번 주 피아노 쉬어", "내일 태권도 5시로", "10/8 방과후 휴강", "금요일 4시 치과", "수요일 바이올린 13:00~14:20 음악실 추가", "목요일 픽업 18시로", "2학기 시간표로 바꿔".
 - 예외 모듈: `worker/src/exceptions.js`, `src/lib/exceptions.js`.
 
+## 9-6. 봇 v2-4 (2026-10-11) — v2 완료
+
+- 보관함 검색: `search_documents`(documents 제목·요약 + archive_posts 제목·내용 ilike) · `send_document_photos`(Storage 공개 URL 또는 telegram file_id 로 sendPhoto).
+- 가족 변경 알림 `worker/src/family.js`: 쉬는 날 등록/삭제, 예외 등록/삭제, 초안 저장 시 시간표 변경 → 다른 가족 chat 에 "👨‍👩‍👧 ○○님이 …".
+- 설정 화면 "AI 비서 사용량 (이번 달)" 카드: `bot_usage` 합계와 Sonnet 5.5 단가 추정 비용.
+- **OpenAI v1 코드 제거**: processSession·callOpenAI·classifyIntent·handleTextTask·handleSmartDelete·handleCompleteTask·checkAutoProcess·handleDayOff(List) 삭제. `OPENAI_API_KEY` 는 더 안 쓴다. `ANTHROPIC_API_KEY` 가 없으면 대화는 안내 메시지만.
+- `/today` 의 UTC 날짜 버그(B6) 수정.
+
 ## 10. 다음 작업 후보
 
 1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기
@@ -296,7 +304,7 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 3-1. 매년 12월: 다음 해 공휴일을 `days_off` 에 추가
 4. ~~텔레그램 연동 코드 방식~~ — DB·웹·Worker 모두 구현돼 있음
 5. 중복 업로드 감지(DB 에 `find_similar_tasks` 함수는 있음, 호출부 없음), 세션 만료 처리
-6. Worker `handleToday`·`callOpenAI` 의 UTC 날짜를 KST 로 교체
+6. ~~Worker `handleToday`·`callOpenAI` 의 UTC 날짜를 KST 로 교체~~ (v2-4 완료)
 
 ---
 

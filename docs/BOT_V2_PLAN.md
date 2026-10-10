@@ -119,7 +119,7 @@ CREATE TABLE bot_conversations (
 | V2-1 | ✅ 2026-10-10 — `assistant.js` + `008_bot_conversations.sql`. 기존 핸들러는 키 없을 때 fallback 으로 남겨 둠(V2-2 끝나면 제거) | 완료 |
 | V2-2 | ✅ 2026-10-10 — `draft.js` + `009_upload_sessions_draft.sql`. Sonnet Vision → 초안 → [✅ 저장][❌ 취소] 버튼 또는 말로 수정(set_draft_tasks) → 저장 시 중복 건너뜀 | 완료 |
 | V2-3 | ✅ 2026-10-11 — 시간표 편집 도구 9개, `schedule_exceptions`(010) + Worker 픽업·정각 알림 반영 + 아침 요약 한 줄 + 시간표 화면 표시/삭제, 사진 초안의 '시간표 변경 제안'. 보관함 검색은 V2-4 로 | 완료 |
-| V2-4 | 되묻기 품질 다듬기, 사용량 상한, 가족 변경 알림 | 소 |
+| V2-4 | ✅ 2026-10-11 — 보관함 검색(search_documents·send_document_photos), 설정 화면 AI 사용량 카드, 가족 변경 알림(family.js: 쉬는 날·예외·초안 시간표 변경), OpenAI v1 코드 제거(handleToday KST 수정 포함) | 완료 |
 
 V2-1 만 해도 "질문에 대답"이 되고, V2-2 가 "제대로 입력됐는지 서로 확인"이다.
 

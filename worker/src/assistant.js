@@ -8,6 +8,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { DRAFT_TASK_SCHEMA, DRAFT_CHANGE_SCHEMA, getDraftSession, updateDraft, saveDraft, discardDraft, renderDraft, renderSaveResult } from "./draft.js";
 import { getExceptions, applyToBlocks, pickupException, alertException, describeException } from "./exceptions.js";
+import { notifyFamily } from "./family.js";
 
 const MODEL = "claude-sonnet-5-5";
 const MAX_TOKENS = 2048;
@@ -286,6 +287,30 @@ export const TOOLS = [
     description: "시간표 예외를 지운다 (원래 시간표로 돌아감). id 는 list_exceptions 결과의 id.",
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
   },
+  // ── 보관함 (받았던 알림장·공지) ──
+  {
+    name: "search_documents",
+    description: "지금까지 받은 알림장·공지(사진으로 보낸 것)와 보관함 글을 제목·요약·내용에서 검색한다. '지난번 현장학습 안내문', '급식 공지' 같은 요청에. 빈 query 면 최근 것부터.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "검색어. 띄어쓰기로 여러 개 가능. 비우면 최근 순" },
+        limit: { type: "integer", description: "최대 개수. 기본 5" },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_document_photos",
+    description: "search_documents 결과의 document_id 에 해당하는 알림장 사진을 이 대화방으로 보낸다. 사용자가 '보여줘', '사진 줘' 라고 할 때.",
+    input_schema: {
+      type: "object",
+      properties: { document_id: { type: "string" } },
+      required: ["document_id"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const CATEGORY_COLORS = { school: "#45B7D1", aftercare: "#FECA57", academy: "#96CEB4", other: "#C39BD3" };
@@ -420,8 +445,8 @@ ${dr.unclear && dr.unclear.length ? "확인 필요: " + dr.unclear.join(" / ") :
   return `너는 "SchoolToDo" 가족 비서야. 초등학생 자녀를 둔 부모 두 명이 텔레그램으로 쓴다.
 오늘: ${todayStr} (${dayNames[d.getUTCDay()]}요일), 한국 시간. ${who}
 
-할 수 있는 일: 할 일(알림장에서 뽑은 준비물·제출물·일정·납부) 조회/추가/수정/완료/삭제, 쉬는 날(공휴일·재량휴업·방학) 등록/조회, 시간표·픽업·정각알림 조회와 편집, 학기 전환, 날짜별 시간표 예외(그날만 쉼·시간 변경·일회성 일정), 알림장 사진 초안 수정·저장.
-아직 못 하는 일: 보관함 검색. 사진은 보내면 자동으로 초안이 만들어진다.
+할 수 있는 일: 할 일(알림장에서 뽑은 준비물·제출물·일정·납부) 조회/추가/수정/완료/삭제, 쉬는 날(공휴일·재량휴업·방학) 등록/조회, 시간표·픽업·정각알림 조회와 편집, 학기 전환, 날짜별 시간표 예외(그날만 쉼·시간 변경·일회성 일정), 알림장 사진 초안 수정·저장, 받았던 알림장·보관함 검색과 사진 다시 보내기.
+사진은 보내면 자동으로 초안이 만들어진다. 쉬는 날·예외를 바꾸면 다른 가족에게 자동으로 알림이 간다(네가 따로 말할 필요 없음).
 
 시간표 규칙:
 - "매주" 바뀌는 것(새 학원, 시간 변경)은 add_block/update_block/delete_block/set_pickups/add_alert. 시간표는 말하는 사람 계정 기준이다.
@@ -519,11 +544,13 @@ async function executeTool(name, input, ctx) {
         method: "POST",
         body: { start_date: input.start, end_date: input.end, reason: String(input.reason).slice(0, 100), kind: input.kind || "school", created_by: userId },
       }));
+      await notifyFamily(env, deps, { exceptChatId: ctx.chatId, actorName: ctx.userTg && ctx.userTg.display_name, text: `쉬는 날을 등록했어요: ${input.start}${input.end !== input.start ? "~" + input.end : ""} ${input.reason} (그날 픽업·시간표 알림 쉼)` });
       return { added: r[0] };
     }
     case "delete_day_off": {
       const r = asArray(await q("days_off", { method: "DELETE", query: `?id=eq.${input.id}` }));
       if (!r[0]) throw new Error("해당 id 가 없음");
+      await notifyFamily(env, deps, { exceptChatId: ctx.chatId, actorName: ctx.userTg && ctx.userTg.display_name, text: `쉬는 날을 지웠어요: ${r[0].start_date}${r[0].end_date !== r[0].start_date ? "~" + r[0].end_date : ""} ${r[0].reason}` });
       return { deleted: r[0] };
     }
     case "get_timetable": {
@@ -641,7 +668,9 @@ async function executeTool(name, input, ctx) {
           reason: input.reason ? String(input.reason).slice(0, 100) : null, created_by: userId,
         },
       }));
-      return { added: { id: r[0].id, text: describeException({ ...r[0], target_time: hm5(r[0].target_time), new_start: hm5(r[0].new_start), new_end: hm5(r[0].new_end) }), start: r[0].start_date, end: r[0].end_date } };
+      const text = describeException({ ...r[0], target_time: hm5(r[0].target_time), new_start: hm5(r[0].new_start), new_end: hm5(r[0].new_end) });
+      await notifyFamily(env, deps, { exceptChatId: ctx.chatId, actorName: ctx.userTg && ctx.userTg.display_name, text: `시간표 예외를 등록했어요: ${text} (${r[0].start_date}${r[0].end_date !== r[0].start_date ? "~" + r[0].end_date : ""})` });
+      return { added: { id: r[0].id, text, start: r[0].start_date, end: r[0].end_date } };
     }
     case "list_exceptions": {
       if (!isDate(input.from) || !isDate(input.to)) throw new Error("날짜 형식 오류");
@@ -653,7 +682,44 @@ async function executeTool(name, input, ctx) {
     case "delete_exception": {
       const r = asArray(await q("schedule_exceptions", { method: "DELETE", query: `?id=eq.${input.id}` }));
       if (!r[0]) throw new Error("해당 id 의 예외가 없음");
+      const x = { ...r[0], target_time: hm5(r[0].target_time), new_start: hm5(r[0].new_start), new_end: hm5(r[0].new_end) };
+      await notifyFamily(env, deps, { exceptChatId: ctx.chatId, actorName: ctx.userTg && ctx.userTg.display_name, text: `시간표 예외를 지웠어요: ${describeException(x)} (${r[0].start_date}${r[0].end_date !== r[0].start_date ? "~" + r[0].end_date : ""})` });
       return { deleted: r[0].id };
+    }
+
+    // ── 보관함 ──
+    case "search_documents": {
+      const limit = Math.min(Math.max(Number(input.limit) || 5, 1), 10);
+      const words = String(input.query || "").trim().split(/\s+/).filter(Boolean).slice(0, 4);
+      const like = (col) => words.map((w) => `${col}.ilike.*${encodeURIComponent(w.replace(/[*,()]/g, ""))}*`);
+      let docQuery = `?user_id=eq.${userId}&select=id,title,ai_summary,document_type,created_at&order=created_at.desc&limit=${limit}`;
+      let postQuery = `?select=id,title,content,created_at&order=created_at.desc&limit=${limit}`;
+      if (words.length) {
+        docQuery += `&or=(${[...like("title"), ...like("ai_summary")].join(",")})`;
+        postQuery += `&or=(${[...like("title"), ...like("content")].join(",")})`;
+      }
+      const [docs, posts] = await Promise.all([q("documents", { query: docQuery }), q("archive_posts", { query: postQuery })]);
+      const docRows = Array.isArray(docs) ? docs : [];
+      const postRows = Array.isArray(posts) ? posts : [];
+      return {
+        documents: docRows.map((d) => ({ document_id: d.id, title: d.title, summary: (d.ai_summary || "").slice(0, 200), type: d.document_type, received: String(d.created_at).slice(0, 10) })),
+        archive_posts: postRows.map((p) => ({ title: p.title, content: (p.content || "").slice(0, 200), date: String(p.created_at).slice(0, 10) })),
+        note: docRows.length === 0 && postRows.length === 0 ? "검색 결과 없음. 다른 말로 다시 찾아보거나 최근 순으로 보여줄 수 있음" : undefined,
+      };
+    }
+    case "send_document_photos": {
+      const docs = asArray(await q("documents", { query: `?id=eq.${input.document_id}&user_id=eq.${userId}&select=id,title` }));
+      if (!docs[0]) throw new Error("해당 문서가 없음");
+      const imgs = asArray(await q("document_images", { query: `?document_id=eq.${input.document_id}&order=page_order.asc&select=storage_path,telegram_file_id` }));
+      if (!imgs.length) return { sent: 0, note: "저장된 사진이 없음" };
+      let sent = 0;
+      for (const im of imgs) {
+        const photo = im.storage_path ? `${env.SUPABASE_URL}/storage/v1/object/public/document-images/${im.storage_path}` : im.telegram_file_id;
+        if (!photo) continue;
+        const r = await deps.tg(env.TELEGRAM_BOT_TOKEN, "sendPhoto", { chat_id: ctx.chatId, photo, caption: sent === 0 ? `📎 ${docs[0].title || "알림장"}` : undefined });
+        if (r && r.ok) sent += 1;
+      }
+      return { sent, title: docs[0].title };
     }
     case "set_draft_tasks": {
       if (!ctx.draftSession) throw new Error("저장 대기 중인 초안이 없음");

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 import { subscribePush, unsubscribePush, isPushSubscribed } from "../lib/push";
-import { fetchHealth, formatAgo, formatKstTime, minutesAgo, JOB_LABELS } from "../lib/health";
+import { fetchHealth, fetchBotUsage, formatAgo, formatKstTime, minutesAgo, JOB_LABELS } from "../lib/health";
 
 export default function SettingsPage() {
   const { user, profile, signOut, fetchProfile } = useAuth();
@@ -215,6 +215,9 @@ export default function SettingsPage() {
       {/* 알림 시스템 상태 */}
       <HealthCard />
 
+      {/* AI 비서 사용량 */}
+      <UsageCard />
+
       {/* Sign out */}
       <button onClick={signOut} style={{ width: "100%", padding: 14, background: "none", border: "1px solid var(--border)", borderRadius: 12, fontSize: 14, color: "var(--red)", cursor: "pointer", marginTop: 8 }}>
         로그아웃
@@ -275,6 +278,34 @@ function HealthCard() {
             ))
           )}
           <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 8 }}>GitHub Actions 가 1시간마다 점검하고, 문제가 있으면 텔레그램으로 알려요.</div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function UsageCard() {
+  const [usage, setUsage] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const first = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth() + 1).padStart(2, "0")}-01`;
+    fetchBotUsage(first).then(setUsage).catch((err) => { console.error("Usage:", err); setError(err); });
+  }, []);
+  const fmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n));
+  return (
+    <Card title="AI 비서 사용량 (이번 달)">
+      {error ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>불러올 수 없어요 (008 SQL 실행 여부 확인)</div>
+      ) : !usage ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>불러오는 중...</div>
+      ) : (
+        <>
+          <Row label="대화 횟수" value={`${usage.sum.calls}회`} />
+          <Row label="입력 토큰" value={`${fmt(usage.sum.input)} (캐시 ${usage.sum.input ? Math.round(usage.sum.cache / usage.sum.input * 100) : 0}%)`} />
+          <Row label="출력 토큰" value={fmt(usage.sum.output)} />
+          <Row label="추정 비용" value={`$${usage.usd.toFixed(2)}`} last />
+          <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 8 }}>Claude Sonnet 5.5 단가 기준 추정. 하루 입력 40만 토큰을 넘으면 그날은 쉬어요.</div>
         </>
       )}
     </Card>
