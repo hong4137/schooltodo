@@ -2,7 +2,16 @@
 // 변경: base64 대신 URL 방식으로 이미지 전달, 에러 디버깅 강화
 // 2026-10-10 v2-1: ANTHROPIC_API_KEY 가 있으면 텍스트 메시지는 assistant.js(Claude)가 처리한다.
 //                  없으면 아래 classifyIntent 기반 기존 흐름. 사진은 아직 기존 흐름.
-import { handleAssistantText } from "./assistant.js";
+import { handleAssistantText, recordUsage } from "./assistant.js";
+import { processSessionV2, handleDraftCallback } from "./draft.js";
+
+// assistant.js / draft.js 에 넘기는 공용 헬퍼 묶음
+function assistantDeps() {
+  return {
+    supabaseQuery, supabaseHeaders, supabaseRpc, sendMessage, tg, getFileUrl, getKSTDateString, formatKDate,
+    addUsage: (env, chatId, day, usage) => recordUsage(env, assistantDeps(), chatId, day, usage),
+  };
+}
 
 const COMPLETE_KEYWORDS = ["완료", "끝", "분석", "다했어", "done"];
 const CANCEL_KEYWORDS = ["취소", "cancel"];
@@ -266,7 +275,8 @@ async function handlePhoto(env, chatId, photoFileId, from) {
       chatId,
       "📸 사진을 받았어요! (1장)\n\n" +
         "여러 장이면 계속 보내세요.\n" +
-        '<b>"완료"</b>를 입력하면 분석을 시작해요.'
+        '<b>"완료"</b>를 입력하면 분석을 시작해요.' +
+        (env.ANTHROPIC_API_KEY ? '\n설명을 덧붙여도 돼요. (예: "이거 다음 주 거야")' : "")
     );
   } else {
     const newCount = session.photo_count + 1;
@@ -1278,6 +1288,16 @@ export default {
     try {
       const update = await request.json();
 
+      // 인라인 버튼 (초안 ✅ 저장 / ❌ 취소)
+      if (update.callback_query) {
+        if (env.ANTHROPIC_API_KEY) {
+          ctx.waitUntil(handleDraftCallback(env, assistantDeps(), update.callback_query, escapeHtml));
+        } else {
+          await tg(env.TELEGRAM_BOT_TOKEN, "answerCallbackQuery", { callback_query_id: update.callback_query.id });
+        }
+        return new Response("OK");
+      }
+
       if (update.message) {
         const msg = update.message;
         const chatId = msg.chat.id;
@@ -1350,13 +1370,24 @@ export default {
         if (kwSession && COMPLETE_KEYWORDS.some((kw) => lowerText.includes(kw))) {
           if (kwSession.photo_count > 0) {
             // 분석은 뒤에서. 바로 200 을 돌려줘야 Telegram 이 같은 메시지를 재전송하지 않는다.
-            ctx.waitUntil(processSession(env, chatId));
+            if (env.ANTHROPIC_API_KEY) {
+              const userTg = await findUserByChatId(env, chatId);
+              ctx.waitUntil(processSessionV2(env, assistantDeps(), { chatId, userTg, session: kwSession, hint: null, esc: escapeHtml }));
+            } else {
+              ctx.waitUntil(processSession(env, chatId));
+            }
           }
           return new Response("OK");
         }
         if (kwSession && CANCEL_KEYWORDS.some((kw) => lowerText.includes(kw))) {
           await markSessionCompleted(env, kwSession.id);
           await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "🗑️ 업로드가 취소되었어요.");
+          return new Response("OK");
+        }
+        // v2: 사진을 모으는 중에 온 다른 말은 "설명"으로 삼아 바로 분석한다 ("이거 내일까지야")
+        if (kwSession && kwSession.photo_count > 0 && env.ANTHROPIC_API_KEY && text && !text.startsWith("/")) {
+          const userTg = await findUserByChatId(env, chatId);
+          ctx.waitUntil(processSessionV2(env, assistantDeps(), { chatId, userTg, session: kwSession, hint: text, esc: escapeHtml }));
           return new Response("OK");
         }
 
@@ -1372,9 +1403,7 @@ export default {
 
             // v2: Claude 대화형 비서. 응답은 바로 200 으로 돌려주고 뒤에서 처리 (Telegram 재전송 방지)
             if (env.ANTHROPIC_API_KEY) {
-              ctx.waitUntil(handleAssistantText(env, { chatId, userTg, text }, {
-                supabaseQuery, supabaseHeaders, sendMessage, tg, getKSTDateString, formatKDate,
-              }));
+              ctx.waitUntil(handleAssistantText(env, { chatId, userTg, text }, assistantDeps()));
               return new Response("OK");
             }
 

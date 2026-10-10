@@ -15,14 +15,15 @@ npx wrangler deploy
 - Secrets 8개는 대시보드에 등록돼 있고 deploy 해도 유지된다. `SUPABASE_URL` 만 평문이라 `[vars]` 에 둔다.
 - 배포 전 확인: `npm run dry-run` (번들만 만들고 올리지 않음).
 
-## 구조 (src/index.js · src/assistant.js)
+## 구조 (src/index.js · src/assistant.js · src/draft.js)
 
 | 구간 | 함수 |
 |---|---|
 | 텔레그램 webhook | `fetch()` → `/start` `/link` `/today` `/list` `/delete` `/reset` 명령, 사진은 `handlePhoto` → `processSession` |
 | 자연어 (v2) | `assistant.js` `handleAssistantText()` — Claude Sonnet 5.5 + tool use. `ANTHROPIC_API_KEY` 있을 때 |
 | 자연어 의도 분류 (v1, 키 없을 때) | `classifyIntent()` gpt-4.1-mini |
-| 알림장 파싱 | `callOpenAI()` gpt-4.1 Vision |
+| 알림장 파싱 (v2) | `draft.js` `processSessionV2()` — Sonnet Vision → 초안 → 버튼/말로 확인 → `saveDraft()` |
+| 알림장 파싱 (v1, 키 없을 때) | `callOpenAI()` gpt-4.1 Vision, 바로 저장 |
 | Cron 분기 | `scheduled()` — 5분마다. 브리핑 07:10 고정, 할 일 알림은 사용자별 `notification_morning/evening`, 픽업은 11~18시 평일 |
 | 할 일 요약 | `sendTaskDigest()` — 아침=오늘, 저녁=내일. `notified_*` 플래그로 중복 방지 |
 | 쉬는 날 | `getDaysOff()` `dayOffFor()` `handleDayOff()` — `days_off` 표 |

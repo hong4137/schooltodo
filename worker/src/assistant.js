@@ -6,6 +6,7 @@
 //   사용량: bot_usage (chat_id·날짜), 하루 입력 토큰 상한
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
+import { DRAFT_TASK_SCHEMA, getDraftSession, updateDraft, saveDraft, discardDraft, renderDraft, renderSaveResult } from "./draft.js";
 
 const MODEL = "claude-sonnet-5-5";
 const MAX_TOKENS = 2048;
@@ -150,6 +151,33 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  // ── 사진 초안 (저장 대기 중인 초안이 있을 때만 의미 있음) ──
+  {
+    name: "set_draft_tasks",
+    description: "저장 대기 중인 알림장 초안의 할 일 목록을 통째로 바꾼다. 사용자가 고치자고 한 부분만 반영하고 나머지는 그대로 둔 전체 목록을 넘긴다. 결과로 새 초안을 돌려주니 그대로 보여준다.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        document_title: { type: "string", description: "바꾸지 않으면 기존 제목 그대로" },
+        tasks: { type: "array", items: DRAFT_TASK_SCHEMA },
+      },
+      required: ["document_title", "tasks"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "save_draft",
+    description: "저장 대기 중인 초안을 할 일로 저장한다. 사용자가 '저장', '맞아', 'ㅇㅇ', '좋아' 등으로 확인했을 때.",
+    strict: true,
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
+  {
+    name: "discard_draft",
+    description: "저장 대기 중인 초안을 버린다. 사용자가 '취소', '버려', '아니야 저장하지 마' 라고 했을 때.",
+    strict: true,
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+  },
 ];
 
 // ── 진입점 ────────────────────────────────────────────────────
@@ -177,9 +205,10 @@ export async function handleAssistantText(env, { chatId, userTg, text }, deps) {
     const history = await loadConversation(env, deps, chatId);
     const messages = [...history.messages, { role: "user", content: text }];
     const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 60_000 });
-    const ctxForTools = { env, deps, userId: userTg.user_id, chatId, todayStr };
+    const draftSession = await getDraftSession(env, deps, chatId);
+    const ctxForTools = { env, deps, userId: userTg.user_id, chatId, todayStr, draftSession, userTg };
 
-    const { reply, usageTotals } = await runLoop(client, buildSystemPrompt(todayStr, userTg), messages, ctxForTools);
+    const { reply, usageTotals } = await runLoop(client, buildSystemPrompt(todayStr, userTg, draftSession), messages, ctxForTools);
 
     await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, toTelegramHtml(reply));
 
@@ -253,15 +282,28 @@ function accumulate(t, u) {
   t.output += u.output_tokens || 0;
 }
 
-function buildSystemPrompt(todayStr, userTg) {
+function buildSystemPrompt(todayStr, userTg, draftSession) {
   const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
   const d = new Date(todayStr + "T00:00:00Z");
   const who = userTg.display_name ? `지금 말하는 사람: ${userTg.display_name}` : "";
+  let draftNote = "";
+  if (draftSession && draftSession.draft) {
+    const dr = draftSession.draft;
+    const lines = (dr.tasks || []).map((t, i) => `${i + 1}. ${t.title} | ${t.due_date}${t.due_time ? " " + t.due_time : ""} | ${t.priority} | ${t.category}${t.description ? " | " + t.description.slice(0, 80) : ""}`);
+    draftNote = `
+
+[저장 대기 중인 알림장 초안] 제목: ${dr.document_title}
+${lines.join("\n") || "(할 일 없음)"}
+${dr.unclear && dr.unclear.length ? "확인 필요: " + dr.unclear.join(" / ") : ""}
+- 사용자가 번호를 말하면 이 초안의 번호다. 고치자고 하면 set_draft_tasks 로 전체 목록(고친 것 반영, 나머지 그대로)을 넘기고, 돌아온 초안을 그대로 보여준다.
+- "저장", "맞아", "ㅇㅇ", "좋아", "그대로" → save_draft. "취소", "버려" → discard_draft.
+- 초안과 상관없는 질문이면 평소처럼 답하되, 초안이 기다리고 있다고 한 줄 덧붙인다.`;
+  }
   return `너는 "SchoolToDo" 가족 비서야. 초등학생 자녀를 둔 부모 두 명이 텔레그램으로 쓴다.
 오늘: ${todayStr} (${dayNames[d.getUTCDay()]}요일), 한국 시간. ${who}
 
-할 수 있는 일: 할 일(알림장에서 뽑은 준비물·제출물·일정·납부) 조회/추가/수정/완료/삭제, 쉬는 날(공휴일·재량휴업·방학) 등록/조회, 시간표·픽업 시각 조회.
-아직 못 하는 일: 시간표 편집, 사진 분석(사진은 보내면 따로 처리됨), 보관함 검색. 부탁받으면 "웹앱에서 할 수 있어요"라고 안내.
+할 수 있는 일: 할 일(알림장에서 뽑은 준비물·제출물·일정·납부) 조회/추가/수정/완료/삭제, 쉬는 날(공휴일·재량휴업·방학) 등록/조회, 시간표·픽업 시각 조회, 알림장 사진 초안 수정·저장.
+아직 못 하는 일: 시간표 편집, 보관함 검색. 부탁받으면 "웹앱에서 할 수 있어요"라고 안내. 사진은 보내면 자동으로 초안이 만들어진다.${draftNote}
 
 원칙:
 - 사실은 반드시 도구로 확인한다. 기억이나 추측으로 지어내지 않는다.
@@ -378,9 +420,50 @@ async function executeTool(name, input, ctx) {
         alerts: asArray(alerts).map((a) => ({ name: a.name, time: hm(a.alert_time) })),
       };
     }
+    case "set_draft_tasks": {
+      if (!ctx.draftSession) throw new Error("저장 대기 중인 초안이 없음");
+      const draft = await updateDraft(env, deps, ctx.draftSession, { document_title: input.document_title, tasks: input.tasks });
+      ctx.draftSession = { ...ctx.draftSession, draft };
+      return { ok: true, draft_preview: renderDraft(draft, (s) => String(s ?? "")).replace(/<[^>]+>/g, "") };
+    }
+    case "save_draft": {
+      if (!ctx.draftSession) throw new Error("저장 대기 중인 초안이 없음");
+      const result = await saveDraft(env, deps, { session: ctx.draftSession, userTg: ctx.userTg });
+      await removeDraftButtons(env, deps, ctx);
+      ctx.draftSession = null;
+      return {
+        saved: result.saved.map((t) => ({ title: t.title, due_date: t.due_date, weekday: weekdayOf(t.due_date) })),
+        skipped_duplicates: result.duplicates.map((d) => ({ title: d.title, due_date: d.due_date, existing: d.existing })),
+        summary_text: renderSaveResult(result, (s) => String(s ?? "")).replace(/<[^>]+>/g, ""),
+      };
+    }
+    case "discard_draft": {
+      if (!ctx.draftSession) throw new Error("저장 대기 중인 초안이 없음");
+      await discardDraft(env, deps, ctx.draftSession);
+      await removeDraftButtons(env, deps, ctx);
+      ctx.draftSession = null;
+      return { ok: true };
+    }
     default:
       throw new Error(`알 수 없는 도구: ${name}`);
   }
+}
+
+// 초안 메시지의 [저장][취소] 버튼을 지운다 (말로 처리했을 때 버튼이 남지 않게)
+async function removeDraftButtons(env, deps, ctx) {
+  const mid = ctx.draftSession && ctx.draftSession.draft_message_id;
+  if (!mid) return;
+  try {
+    await deps.tg(env.TELEGRAM_BOT_TOKEN, "editMessageReplyMarkup", { chat_id: ctx.chatId, message_id: mid });
+  } catch (err) {
+    console.error("removeDraftButtons:", err);
+  }
+}
+
+// draft.js 가 사용량을 같은 표에 더할 때 쓴다 (deps.addUsage)
+export async function recordUsage(env, deps, chatId, day, usage) {
+  const existing = await getUsageToday(env, deps, chatId, day);
+  await addUsage(env, deps, chatId, day, usage, existing);
 }
 
 // ── 날짜 유틸 ─────────────────────────────────────────────────

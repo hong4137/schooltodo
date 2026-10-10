@@ -10,8 +10,9 @@ Supabase(`schoolworks`, ref `sprrelvxxgvrdkmplidu`)에 적용한 SQL 모음.
 | `006_days_off.sql` | **쉬는 날** 표 + RLS + 2026-12~2027 공휴일 시드. 2026-10-10 작성, 대시보드 SQL Editor 에서 실행 |
 | `007_job_status.sql` | Cron 실행 기록(`job_status`, `job_runs`) + 30일 정리 함수. 헬스체크용 |
 | `008_bot_conversations.sql` | 봇 v2 대화 기억(`bot_conversations`)·사용량(`bot_usage`) |
+| `009_upload_sessions_draft.sql` | 사진 초안: `upload_sessions.draft/hint/draft_message_id` 컬럼 |
 
-새 변경은 `009_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
+새 변경은 `010_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
 
 ## 기준선 다시 받기
 

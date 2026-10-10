@@ -270,6 +270,14 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - 설계·남은 단계(사진 초안 확인 V2-2, 시간표 편집·날짜별 예외 V2-3)는 `docs/BOT_V2_PLAN.md`.
 - 필요한 비밀: `ANTHROPIC_API_KEY`. SQL: `008_bot_conversations.sql`.
 
+## 9-4. 봇 v2-2 — 사진 초안 확인 (2026-10-10)
+
+- `worker/src/draft.js`: 키가 있으면 "완료"(또는 사진 뒤에 붙인 말)에 Claude Sonnet 5.5 Vision 이 초안을 뽑아 `upload_sessions.draft` 에 두고, 번호 목록 + [✅ 저장][❌ 취소] 버튼을 보낸다. 바로 저장하지 않는다.
+- 고치기: "2번은 금요일로", "3번 빼줘" → assistant 의 `set_draft_tasks`. 저장: 버튼 또는 "저장/맞아" → `saveDraft()` (documents·document_images·tasks 저장, `find_similar_tasks` 로 같은 날짜 비슷한 제목은 건너뛰고 알림).
+- 흐릿한 부분은 초안에 "❓ 확인 필요"로 질문이 붙는다.
+- 세션 status: active → processing → draft → completed | cancelled. `009_upload_sessions_draft.sql` 필요.
+- 키가 없으면 기존 OpenAI 흐름(바로 저장) 그대로. 기존 코드 제거는 v2-4.
+
 ## 10. 다음 작업 후보
 
 1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기
