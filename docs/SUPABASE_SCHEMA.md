@@ -22,6 +22,8 @@
 | `archive_posts` / `archive_files` | 보관함 글·첨부 | 웹 | |
 | `link_codes` | 텔레그램 연동 6자리 코드 | RPC 전용 | `code`, `user_id`, `expires_at` |
 | `days_off` | 쉬는 날(공휴일·재량휴업·방학). **가족 공용**, 로그인 사용자 전원 읽기/쓰기 | 웹·Worker | `start_date`, `end_date`, `reason`, `kind`(holiday/school/vacation/other) — 006 |
+| `schedule_exceptions` | 날짜별 시간표 예외(가족 공용). `kind`(block/pickup/alert/oneoff) × `action`(skip/move/add), `target_name`/`target_time` 으로 매칭 | 웹·Worker·봇 | `start_date`, `end_date`, `new_start`, `new_end`, `reason` — 010 |
+| `bot_conversations` / `bot_usage` | 봇 대화 기억·사용량 | Worker | — 008 |
 | `job_status` | job 별 마지막 실행 (cron_tick, health_alert) | Worker 쓰기, 웹 읽기 | `job`(PK), `last_run_at`, `last_ok`, `last_detail` — 007 |
 | `job_runs` | 발송 기록 (briefing, digest_morning/evening, pickup, alert). 30일 보관 | Worker 쓰기, 웹 읽기 | `job`, `user_id`, `ran_at`, `ok`, `detail`(jsonb) — 007 |
 

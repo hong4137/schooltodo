@@ -278,6 +278,16 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - 세션 status: active → processing → draft → completed | cancelled. `009_upload_sessions_draft.sql` 필요.
 - 키가 없으면 기존 OpenAI 흐름(바로 저장) 그대로. 기존 코드 제거는 v2-4.
 
+## 9-5. 봇 v2-3 — 시간표 편집 · 날짜별 예외 (2026-10-11)
+
+- **시간표 편집(말하는 사람 계정)**: add/update/delete_block, set_pickups, add/delete_alert, list_terms, set_active_term. 삭제·학기 전환은 확인 후.
+- **날짜별 예외(가족 공용)** `schedule_exceptions`(010): kind block/pickup/alert/oneoff × action skip/move/add. 블록 id 가 아니라 날짜 + 이름/시각으로 맞춘다(두 계정 시간표가 각자라서).
+  - Worker `handlePickupReminder`: 그날 예외를 보고 픽업·정각 알림을 건너뛰거나 바뀐 시각에 울림. 아침/저녁 요약에 "📅 시간표 변경" 한 줄.
+  - 웹 시간표: 이번 주 예외 배너(지우기 가능), 쉬는 수업은 흐리게+취소선, 옮긴 수업은 새 시각, 일회성은 점선 블록.
+  - 사진 초안: `schedule_changes` 로 휴강·시간 변경·행사를 제안하고 저장 시 예외로 들어감.
+- 봇 예시: "이번 주 피아노 쉬어", "내일 태권도 5시로", "10/8 방과후 휴강", "금요일 4시 치과", "수요일 바이올린 13:00~14:20 음악실 추가", "목요일 픽업 18시로", "2학기 시간표로 바꿔".
+- 예외 모듈: `worker/src/exceptions.js`, `src/lib/exceptions.js`.
+
 ## 10. 다음 작업 후보
 
 1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기

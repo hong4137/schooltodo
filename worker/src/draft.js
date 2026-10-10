@@ -24,6 +24,23 @@ export const DRAFT_TASK_SCHEMA = {
   additionalProperties: false,
 };
 
+// 사진에서 읽은 "그날만" 시간표 변경 (휴강, 시간 변경, 일회성 행사)
+export const DRAFT_CHANGE_SCHEMA = {
+  type: "object",
+  properties: {
+    start: { type: "string", description: "YYYY-MM-DD" },
+    end: { type: "string", description: "YYYY-MM-DD (하루면 start 와 같게)" },
+    kind: { type: "string", enum: ["block", "pickup", "alert", "oneoff"], description: "block=수업(방과후·늘봄·학원), pickup=픽업, alert=하원·이동 알림, oneoff=그날만 있는 일정" },
+    target_name: { type: ["string", "null"], description: "대상 수업·알림 이름. 문서에 적힌 이름 그대로(예: 방과후, 늘봄). pickup 이면 null. oneoff 면 새 일정 이름" },
+    action: { type: "string", enum: ["skip", "move", "add"] },
+    new_start: { type: ["string", "null"], description: "move/add: HH:MM" },
+    new_end: { type: ["string", "null"], description: "add: HH:MM" },
+    reason: { type: "string", description: "예: 운동회로 휴강" },
+  },
+  required: ["start", "end", "kind", "target_name", "action", "new_start", "new_end", "reason"],
+  additionalProperties: false,
+};
+
 const SUBMIT_DRAFT_TOOL = {
   name: "submit_draft",
   description: "사진에서 뽑은 결과를 제출한다. 반드시 이 도구로만 답한다.",
@@ -35,10 +52,11 @@ const SUBMIT_DRAFT_TOOL = {
       document_type: { type: "string", enum: ["notice", "letter", "schedule", "receipt", "other"] },
       summary: { type: "string", description: "한두 문장 요약" },
       tasks: { type: "array", items: DRAFT_TASK_SCHEMA },
+      schedule_changes: { type: "array", items: DRAFT_CHANGE_SCHEMA, description: "문서가 특정 날짜의 수업 휴강·시간 변경·일회성 행사를 알리면 여기에. 없으면 빈 배열" },
       key_facts: { type: "array", items: { type: "string" }, description: "사진의 핵심 사실(날짜·기간·항목·장소·금액·연락처)을 한 줄씩. 할 일이 없어도 반드시 채운다. 나중에 사용자가 '그거 넣어줘'라고 할 때 쓴다" },
       unclear: { type: "array", items: { type: "string" }, description: "확실히 못 읽은 것이나 부모에게 확인할 질문(예: 지난 마감을 넣을지). 없으면 빈 배열" },
     },
-    required: ["document_title", "document_type", "summary", "tasks", "key_facts", "unclear"],
+    required: ["document_title", "document_type", "summary", "tasks", "schedule_changes", "key_facts", "unclear"],
     additionalProperties: false,
   },
 };
@@ -56,6 +74,7 @@ function visionSystemPrompt(todayStr) {
 - 날짜나 내용이 흐릿해 확신이 없으면 unclear 에 질문으로 적는다. (예: "제출 마감이 14일인지 16일인지 흐릿함")
 - 마감·날짜가 이미 지난 항목은 네가 빼지 말고 tasks 에 그대로 넣되, unclear 에 "○○(10/8)은 이미 지났는데 넣을까요?" 라고 적는다. 뺄지는 부모가 정한다.
 - key_facts 에는 할 일 여부와 상관없이 사진에서 읽은 날짜·기간·항목·장소·금액을 한 줄씩 적는다. (예: "방과후 신청 기간 10/2~10/8", "배드민턴 1~6학년 월·수")
+- 특정 날짜에 수업이 쉬거나(휴강·운동회·현장학습으로 방과후 없음) 시간이 바뀌거나 그날만 있는 행사(운동회, 공개수업)는 schedule_changes 에 넣는다. 이름은 문서에 적힌 대로. 이것도 할 일(안내)과 별개로 적는다.
 - 사용자가 사진과 함께 보낸 말이 있으면 그 말을 우선한다.
 
 반드시 submit_draft 도구로만 답한다.`;
@@ -127,6 +146,7 @@ export async function analyzePhotos(env, deps, { images, hint, todayStr }) {
           document_type: d.document_type || "notice",
           summary: d.summary || "",
           tasks: (d.tasks || []).map(normalizeTask).filter(Boolean),
+          schedule_changes: (d.schedule_changes || []).map(normalizeChange).filter(Boolean),
           key_facts: Array.isArray(d.key_facts) ? d.key_facts.map((s) => String(s).slice(0, 120)).slice(0, 12) : [],
           unclear: Array.isArray(d.unclear) ? d.unclear.slice(0, 5) : [],
         },
@@ -154,6 +174,37 @@ export function normalizeTask(t) {
   };
 }
 
+const isDateStr = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const isTimeStr = (s) => typeof s === "string" && /^([01]\d|2[0-3]):[0-5]\d/.test(s);
+
+export function normalizeChange(c) {
+  if (!c || !isDateStr(c.start)) return null;
+  const end = isDateStr(c.end) && c.end >= c.start ? c.end : c.start;
+  const kind = ["block", "pickup", "alert", "oneoff"].includes(c.kind) ? c.kind : "block";
+  const action = ["skip", "move", "add"].includes(c.action) ? c.action : "skip";
+  const out = {
+    start: c.start, end, kind,
+    target_name: kind === "pickup" ? null : (c.target_name ? String(c.target_name).slice(0, 100) : null),
+    action,
+    new_start: isTimeStr(c.new_start) ? c.new_start.slice(0, 5) : null,
+    new_end: isTimeStr(c.new_end) ? c.new_end.slice(0, 5) : null,
+    reason: c.reason ? String(c.reason).slice(0, 100) : "",
+  };
+  if (out.action !== "skip" && !out.new_start) return null;
+  if (out.action === "add" && (out.kind !== "oneoff" || !out.target_name)) return null;
+  if (out.kind !== "pickup" && out.action !== "add" && !out.target_name) return null;
+  return out;
+}
+
+export function describeChange(c) {
+  const range = c.start === c.end ? fmtDate(c.start) : `${fmtDate(c.start)}~${fmtDate(c.end)}`;
+  const what = c.kind === "pickup" ? "픽업" : c.target_name;
+  const why = c.reason ? ` (${c.reason})` : "";
+  if (c.action === "skip") return `${range} ${what} 쉼${why}`;
+  if (c.action === "move") return `${range} ${what} → ${c.new_start}${c.new_end ? "~" + c.new_end : ""}${why}`;
+  return `${range} ${what} ${c.new_start}${c.new_end ? "~" + c.new_end : ""}${why}`;
+}
+
 // ── 초안 표시 ─────────────────────────────────────────────────
 function fmtDate(dateStr) {
   const d = new Date(dateStr + "T00:00:00Z");
@@ -165,7 +216,7 @@ export function renderDraft(draft, esc) {
   if (draft.summary) msg += `<i>${esc(draft.summary)}</i>\n`;
   msg += "\n";
   if (!draft.tasks.length) {
-    msg += "할 일을 찾지 못했어요.\n";
+    msg += (draft.schedule_changes && draft.schedule_changes.length) ? "할 일은 없고 시간표 변경만 있어요.\n" : "할 일을 찾지 못했어요.\n";
   }
   draft.tasks.forEach((t, i) => {
     msg += `${i + 1}. ${PRIORITY_EMOJI[t.priority] || "🟡"} <b>${esc(t.title)}</b> — ${fmtDate(t.due_date)}${t.due_time ? ` ${t.due_time}` : ""}\n`;
@@ -174,6 +225,9 @@ export function renderDraft(draft, esc) {
       msg += `   ${esc(desc)}\n`;
     }
   });
+  if (draft.schedule_changes && draft.schedule_changes.length) {
+    msg += `\n📅 시간표 변경 제안\n` + draft.schedule_changes.map((c, i) => `${String.fromCharCode(0x2460 + i)} ${esc(describeChange(c))}`).join("\n") + `\n   저장하면 그날 알림·시간표에 반영돼요. 빼려면 "①은 빼줘".\n`;
+  }
   if (draft.unclear && draft.unclear.length) {
     msg += `\n❓ 확인 필요\n` + draft.unclear.map((u) => `• ${esc(u)}`).join("\n") + "\n";
   }
@@ -229,7 +283,7 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
     console.log(`[Draft] chat=${chatId} photos=${images.length} tasks=${draft.tasks.length} in=${usage.input} out=${usage.output}`);
     if (deps.addUsage) await deps.addUsage(env, chatId, todayStr, usage);
 
-    if (draft.tasks.length === 0) {
+    if (draft.tasks.length === 0 && draft.schedule_changes.length === 0) {
       // 할 일은 없지만 사진 맥락(key_facts)은 초안으로 남겨 둔다 → "그거라도 넣어줘" 가 이어진다
       let msg = `📋 <b>${esc(draft.document_title)}</b>\n`;
       if (draft.summary) msg += `<i>${esc(draft.summary)}</i>\n`;
@@ -262,6 +316,7 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
 export async function updateDraft(env, deps, session, patch) {
   const draft = { ...(session.draft || {}), ...patch };
   draft.tasks = (draft.tasks || []).map(normalizeTask).filter(Boolean);
+  draft.schedule_changes = (draft.schedule_changes || []).map(normalizeChange).filter(Boolean);
   await patchSession(env, deps, session.id, { draft });
   return draft;
 }
@@ -325,19 +380,37 @@ export async function saveDraft(env, deps, { session, userTg }) {
     if (Array.isArray(rows) && rows[0]) saved.push(rows[0]);
   }
 
+  // 시간표 변경 → schedule_exceptions (가족 공용)
+  const changes = [];
+  for (const c of (draft.schedule_changes || []).map(normalizeChange).filter(Boolean)) {
+    const rows = await q(env, deps, "schedule_exceptions", {
+      method: "POST",
+      body: {
+        start_date: c.start, end_date: c.end, kind: c.kind, target_name: c.target_name, target_time: null,
+        action: c.action, new_start: c.new_start ? c.new_start + ":00" : null, new_end: c.new_end ? c.new_end + ":00" : null,
+        reason: c.reason || null, created_by: userId,
+      },
+    });
+    if (Array.isArray(rows) && rows[0]) changes.push(c);
+    else console.error("schedule_exceptions insert failed:", rows && rows.message);
+  }
+
   await patchSession(env, deps, session.id, { status: "completed" });
-  return { saved, duplicates, docId };
+  return { saved, duplicates, changes, docId };
 }
 
 export async function discardDraft(env, deps, session) {
   await patchSession(env, deps, session.id, { status: "cancelled" });
 }
 
-export function renderSaveResult({ saved, duplicates }, esc) {
-  let msg = `✅ ${saved.length}개 할 일을 저장했어요!\n\n`;
+export function renderSaveResult({ saved, duplicates, changes }, esc) {
+  let msg = saved.length ? `✅ ${saved.length}개 할 일을 저장했어요!\n\n` : `✅ 저장했어요.\n\n`;
   saved.forEach((t, i) => {
     msg += `${i + 1}. ${PRIORITY_EMOJI[t.priority] || "🟡"} <b>${esc(t.title)}</b> — ${fmtDate(t.due_date)}${t.due_time ? ` ${String(t.due_time).slice(0, 5)}` : ""}\n`;
   });
+  if (changes && changes.length) {
+    msg += `\n📅 시간표 변경 ${changes.length}건 반영\n` + changes.map((c) => `• ${esc(describeChange(c))}`).join("\n") + "\n그날 알림은 바뀐 대로 울려요. 하원·픽업 시각도 바뀌면 말씀해 주세요.\n";
+  }
   if (duplicates.length) {
     msg += `\n⏭ 이미 있어서 건너뜀 ${duplicates.length}개\n` + duplicates.map((d) => `• ${esc(d.title)} (${fmtDate(d.due_date)}, 기존: ${esc(d.existing)})`).join("\n") + "\n";
   }

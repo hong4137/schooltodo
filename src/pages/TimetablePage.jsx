@@ -2,6 +2,20 @@ import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
 import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, savePickups, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm, createTerm, deleteTerm } from "../lib/timetable";
 import { fetchDaysOff, findDayOff, kstTodayStr, dayOffEmoji } from "../lib/daysOff";
+import { fetchExceptions, deleteException, exceptionsOn, findBlockException, findPickupException, findAlertException, oneoffsOn, describeException } from "../lib/exceptions";
+
+// 오늘이 속한 주의 월~금 날짜 (토·일이면 다음 주)
+function weekDates(todayStr) {
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  const dow = t.getUTCDay();
+  const offsetToMon = dow === 0 ? 1 : dow === 6 ? 2 : 1 - dow;
+  const mon = new Date(Date.UTC(y, m - 1, d + offsetToMon));
+  return DAY_KEYS.map((_, i) => {
+    const x = new Date(mon.getTime() + i * 86400000);
+    return `${x.getUTCFullYear()}-${String(x.getUTCMonth() + 1).padStart(2, "0")}-${String(x.getUTCDate()).padStart(2, "0")}`;
+  });
+}
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -44,15 +58,30 @@ export default function TimetablePage() {
   const [showPickupEdit, setShowPickupEdit] = useState(false);
   const [showTermPicker, setShowTermPicker] = useState(false);
   const [todayOff, setTodayOff] = useState(null);
+  const [weekExceptions, setWeekExceptions] = useState([]);
+  const todayStr = kstTodayStr();
+  const dates = useMemo(() => weekDates(todayStr), [todayStr]);
 
   useEffect(() => { if (user) loadInit(); }, [user]);
 
+  async function loadExceptions() {
+    try {
+      setWeekExceptions(await fetchExceptions(dates[0], dates[4]));
+    } catch (err) { console.error("Exceptions:", err); }
+  }
+
+  async function handleDeleteException(e) {
+    if (!confirm(`'${describeException(e)}' 예외를 지울까요? 원래 시간표대로 돌아가요.`)) return;
+    try { await deleteException(e.id); setWeekExceptions((prev) => prev.filter((x) => x.id !== e.id)); }
+    catch (err) { console.error("Delete exception:", err); alert("삭제 실패"); }
+  }
+
   async function loadInit() {
     try {
-      const todayStr = kstTodayStr();
       fetchDaysOff(todayStr, todayStr)
         .then((rows) => setTodayOff(findDayOff(rows, todayStr)))
         .catch((err) => console.error("Days off:", err));
+      loadExceptions();
       const term = await getActiveTerm(user.id);
       setActiveTermState(term);
       const t = await fetchTerms(user.id);
@@ -216,6 +245,20 @@ export default function TimetablePage() {
         </div>
       )}
 
+      {/* 이번 주 시간표 예외 */}
+      {weekExceptions.length > 0 && (
+        <div style={{ margin: "0 16px 10px", padding: "10px 14px", borderRadius: 12, background: "#F0F4FF", border: "1px solid #C7D2FE" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#3730A3", marginBottom: 6 }}>📅 이번 주 시간표 변경</div>
+          {weekExceptions.map((e) => (
+            <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+              <span style={{ flex: 1, fontSize: 13, color: "#1E1B4B" }}>{describeException(e)}</span>
+              <button onClick={() => handleDeleteException(e)} style={{ fontSize: 11, color: "#4338CA", background: "none", border: "1px solid #C7D2FE", borderRadius: 8, padding: "2px 8px", cursor: "pointer" }}>지우기</button>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: "#6366F1", marginTop: 4 }}>텔레그램에 "내일 피아노 쉬어" 처럼 말하면 등록돼요</div>
+        </div>
+      )}
+
       {/* Empty state */}
       {blocks.length === 0 && alerts.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 16px" }}>
@@ -238,10 +281,26 @@ export default function TimetablePage() {
               </div>
             </div>
             {DAY_KEYS.map((dayKey, di) => {
-              const dayBlocks = blocks.filter((b) => b.day === dayKey);
               const isToday = nowDay === di + 1;
-              const dayPickups = pickups[dayKey] || [];
-              const dayAlerts = alerts.filter((a) => a.day === dayKey);
+              const dayEx = exceptionsOn(weekExceptions, dates[di]);
+              // 예외 적용: 쉼은 흐리게, 시간 변경은 새 시각으로, 일회성은 점선 블록으로
+              const dayBlocks = blocks.filter((b) => b.day === dayKey).map((b) => {
+                const ex = findBlockException(dayEx, b);
+                if (!ex) return b;
+                if (ex.action === "move") return { ...b, start: ex.new_start || b.start, end: ex.new_end || b.end, exception: ex };
+                return { ...b, exception: ex };
+              });
+              oneoffsOn(dayEx).forEach((o) => dayBlocks.push({ id: `oneoff-${o.id}`, name: o.target_name, start: o.new_start, end: o.new_end || o.new_start, color: "#6366F1", category: "other", oneoff: true, exception: o }));
+              const dayPickups = (pickups[dayKey] || []).map((p) => {
+                const ex = findPickupException(dayEx, p.time);
+                if (!ex) return p;
+                return ex.action === "skip" ? { ...p, skipped: true } : { ...p, time: ex.new_start || p.time, moved: true };
+              }).filter((p) => !p.skipped);
+              const dayAlerts = alerts.filter((a) => a.day === dayKey).map((a) => {
+                const ex = findAlertException(dayEx, a);
+                if (!ex) return a;
+                return ex.action === "skip" ? { ...a, skipped: true } : { ...a, time: ex.new_start || a.time, moved: true };
+              }).filter((a) => !a.skipped);
               // 오늘이면 아직 안 지난 첫 픽업만 강조
               const nextPickupTime = isToday
                 ? (dayPickups.find((p) => timeToMin(p.time) >= nowMin)?.time ?? null)
@@ -264,7 +323,7 @@ export default function TimetablePage() {
                       <div key={h} style={{ position: "absolute", top: (h * 60 - timeStart) * pxPerMin, left: 0, right: 0, borderTop: "1px solid #F0F0F0" }} />
                     ))}
                     {dayBlocks.map((b) => (
-                      <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={(bl) => { setEditBlock(bl); setShowEdit(true); }} />
+                      <TimetableBlock key={b.id} block={b} timeStart={timeStart} pxPerMin={pxPerMin} onClick={(bl) => { if (bl.oneoff) return; setEditBlock(bl); setShowEdit(true); }} />
                     ))}
                     {dayAlerts.map((a) => (
                       <AlertMarker key={a.id} alert={a} timeStart={timeStart} pxPerMin={pxPerMin} isToday={isToday} nowMin={nowMin} />
@@ -447,17 +506,23 @@ function TimetableBlock({ block, timeStart, pxPerMin, onClick }) {
   const isSmall = height < 40;
   const isTiny = height < 28;
   const isLunch = block.name === "점심";
+  const ex = block.exception;
+  const skipped = ex && ex.action === "skip";
+  const moved = ex && ex.action === "move";
   return (
     <div onClick={() => onClick?.(block)} style={{
       position: "absolute", top, left: 2, right: 2, height, borderRadius: 8,
       background: isLunch ? "#F5F5F5" : `${block.color}18`,
-      border: `1.5px solid ${isLunch ? "#E0E0E0" : block.color}40`,
-      borderLeft: isLunch ? undefined : `3px solid ${block.color}`,
+      border: block.oneoff ? `1.5px dashed ${block.color}` : `1.5px solid ${isLunch ? "#E0E0E0" : block.color}40`,
+      borderLeft: isLunch || block.oneoff ? undefined : `3px solid ${block.color}`,
       padding: isTiny ? "1px 6px" : "3px 6px", cursor: "pointer", overflow: "hidden",
       display: "flex", flexDirection: isSmall ? "row" : "column",
       alignItems: isSmall ? "center" : "flex-start", gap: isSmall ? 4 : 0,
+      opacity: skipped ? 0.4 : 1,
     }}>
-      <span style={{ fontSize: isTiny ? 10 : 11, fontWeight: 700, color: isLunch ? "#999" : block.color, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{block.name}</span>
+      <span style={{ fontSize: isTiny ? 10 : 11, fontWeight: 700, color: isLunch ? "#999" : block.color, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: skipped ? "line-through" : "none" }}>
+        {block.name}{skipped ? " 쉼" : moved ? " ↗" : block.oneoff ? " ·1회" : ""}
+      </span>
       {!isTiny && <span style={{ fontSize: 9, color: isLunch ? "#BBB" : `${block.color}99`, lineHeight: 1.2, whiteSpace: "nowrap" }}>{block.start}~{block.end}</span>}
     </div>
   );

@@ -4,6 +4,7 @@
 //                  없으면 아래 classifyIntent 기반 기존 흐름. 사진은 아직 기존 흐름.
 import { handleAssistantText, recordUsage } from "./assistant.js";
 import { processSessionV2, handleDraftCallback } from "./draft.js";
+import { getExceptions, pickupException, alertException, describeException } from "./exceptions.js";
 
 // assistant.js / draft.js 에 넘기는 공용 헬퍼 묶음
 function assistantDeps() {
@@ -928,6 +929,9 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
     return;
   }
 
+  // 오늘 날짜의 시간표 예외 (픽업 시각 변경·취소, 정각 알림 변경·취소)
+  const exceptions = await getExceptions(env, { supabaseQuery }, getKSTDateString());
+
   const nowTotalMin = kstHour * 60 + kstMin;
 
   try {
@@ -943,7 +947,10 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
       const activeTerm = pickup.profiles?.active_term;
       if (pickup.term && activeTerm && pickup.term !== activeTerm) continue;
       if (dayOffFor(daysOff, pickup.user_id)) continue;
-      const pickupTime = pickup.pickup_time; // "15:30:00"
+      let pickupTime = pickup.pickup_time; // "15:30:00"
+      const pex = pickupException(exceptions, String(pickupTime).slice(0, 5));
+      if (pex && pex.action === "skip") continue;
+      if (pex && pex.action === "move" && pex.new_start) pickupTime = pex.new_start + ":00";
       const [ph, pm] = pickupTime.split(":").map(Number);
       const pickupTotalMin = ph * 60 + pm;
       const reminderMin = pickupTotalMin - 60; // 1시간 전
@@ -997,7 +1004,11 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
       const activeTerm = alert.profiles?.active_term;
       if (alert.term && activeTerm && alert.term !== activeTerm) continue;
       if (dayOffFor(daysOff, alert.user_id)) continue;
-      const [ah, am] = alert.alert_time.split(":").map(Number);
+      let alertTime = alert.alert_time;
+      const aex = alertException(exceptions, { name: alert.name, time: String(alertTime).slice(0, 5) });
+      if (aex && aex.action === "skip") continue;
+      if (aex && aex.action === "move" && aex.new_start) alertTime = aex.new_start + ":00";
+      const [ah, am] = alertTime.split(":").map(Number);
       const alertTotalMin = ah * 60 + am;
 
       // 정각 알림: 해당 슬롯 안
@@ -1582,6 +1593,8 @@ async function sendTaskDigest(env, userId, kind, targetDate, daysOffRows) {
     let msg = `${emoji} <b>${label}의 할 일</b> (${tasks.length}개)\n\n`;
     const off = dayOffFor(daysOffRows, userId);
     if (off) msg += `🏖 ${label}은 <b>${escapeHtml(off.reason)}</b>, 학교 안 가는 날이에요.\n\n`;
+    const exceptions = await getExceptions(env, { supabaseQuery }, targetDate);
+    if (exceptions.length) msg += `📅 ${label} 시간표 변경: ${escapeHtml(exceptions.map(describeException).join(", "))}\n\n`;
     tasks.forEach((t, i) => {
       const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
       const time = t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : "";
