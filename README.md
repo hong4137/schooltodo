@@ -8,7 +8,7 @@
 | 웹앱 (React + Vite) | https://hong4137.github.io/schooltodo/ | `src/` — main push 시 GitHub Pages 자동 배포 |
 | 봇·알림 Worker | `schooltodo-bot.hong4137.workers.dev` | `worker/` — `npx wrangler deploy` |
 | DB·스토리지 (Supabase `schoolworks`) | `sprrelvxxgvrdkmplidu.supabase.co` | `sql/migrations/`, `docs/SUPABASE_SCHEMA.md` |
-| 네스트 브리핑 (Apps Script) | Google Apps Script | `apps-script/briefing.gs` (재구성본, 원본과 대조 필요) |
+| 네스트 브리핑 (Apps Script) | Google Apps Script | `apps-script/briefing.gs` |
 
 ## 개발
 

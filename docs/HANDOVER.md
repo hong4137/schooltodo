@@ -10,7 +10,7 @@
 - **Cron 4번은 평일 한정이 아니다.** 대시보드 실제 값은 `*/10 2-9 * * *` (매일). 평일 필터는 코드(`isWeekday`)가 한다.
 - **텔레그램 연동 코드(`/link` + 코드)는 구현돼 있다.** DB 에 `link_codes` 테이블과 `generate_link_code`·`verify_link_code` 함수가 있고, 웹·Worker 호출부도 있다. 10장 4번은 완료 항목.
 - **SQL 기준선 확보.** 누락된 001~003·006~017 원본은 사라졌지만, 운영 DB 를 `pg_dump` 로 받아 `sql/migrations/000_baseline_2026-10-10.sql` 에 넣었다(테이블 16개·함수 6개·정책 20개). 덤프 절차는 `sql/migrations/README.md`.
-- **Apps Script 사본은 아직 없다.** Google Apps Script 편집기에서 `briefing.gs` 를 복사해 `apps-script/` 에 넣어야 한다.
+- Apps Script 원본은 2026-10-11 `apps-script/briefing.gs` 에 편입됐다.
 - `toISOString()` 잔존 건은 v2-4 에서 해소(handleToday KST, callOpenAI 삭제).
 
 ---
@@ -40,7 +40,7 @@
 ① 웹앱 (React + Vite)          → GitHub Pages        ✅ 레포에 있음
 ② 봇/알림 (Cloudflare Worker)   → Cloudflare 대시보드  ✅ worker/ 로 편입 (2026-10-10)
 ③ DB/스토리지 (Supabase)        → Supabase 콘솔        ✅ 기준선 덤프 000 + 004·005 (2026-10-10)
-④ 네스트 브리핑 (Apps Script)   → Google Apps Script   ❌ 레포에 없음
+④ 네스트 브리핑 (Apps Script)   → Google Apps Script   ✅ apps-script/briefing.gs (2026-10-11)
 ```
 
 ### 데이터 흐름
@@ -193,7 +193,7 @@ sql/migrations/
   000_baseline          ✅ 운영 DB pg_dump (누락 001~003·006~017 을 대체)
   004, 005              ✅
 apps-script/
-  briefing.gs           ❌ Apps Script 편집기에서 복사해 올 것
+  briefing.gs           ✅ 원본 편입 (2026-10-11)
 ```
 
 이제부터 Worker 는 `worker/` 에서 `npx wrangler deploy` 로만 배포한다.
@@ -303,7 +303,7 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - **아침 요약에 지난 할 일(A4)**: 미완료 3개까지 꼬리에.
 - **웹**: `fetchTasks` 의 `documents!inner` 제거(C2, 텍스트 할 일 누락 가능성), 완료 섹션 높이(C4), `sw.js` CACHE_NAME 을 빌드 시각으로 자동 치환(C5, `scripts/stamp-sw.mjs`), anon 키 `VITE_SUPABASE_*` 환경변수 우선(C6, `.env.example`).
 - **Worker 자동 배포(D3)**: `.github/workflows/worker-deploy.yml` — 저장소 비밀 `CLOUDFLARE_API_TOKEN` 이 있을 때만 `worker/**` 변경 시 배포. 없으면 건너뜀(로컬 배포 유지).
-- **Apps Script**: `apps-script/briefing.gs` 는 **재구성본**(Drive 연결 만료로 원본 미확보). 편집기 원본과 대조 후 교체. 규격은 `apps-script/README.md`.
+- **Apps Script**: `apps-script/briefing.gs` 에 편집기 원본 편입(2026-10-11). 제목 접두사 `[브리핑] `, 같은 날 중복·지난 브리핑 자동 정리. 규격은 `apps-script/README.md`.
 - 이제 `public/sw.js` 의 CACHE_NAME 을 손으로 올릴 필요가 없다(9장 "PWA 서비스워커 캐시" 항목은 더 이상 해당 없음).
 
 ## 10. 다음 작업 후보
@@ -312,7 +312,6 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 2. 네스트 브리핑에 시간표·픽업 시간 추가 (현재는 할 일만 읽어줌)
 3. 2학기 정규수업 시간표 실제와 대조
 3-1. 매년 12월: 다음 해 공휴일을 `days_off` 에 추가
-3-2. Apps Script 원본을 `apps-script/briefing.gs` 와 대조해 교체
 4. ~~텔레그램 연동 코드 방식~~ — DB·웹·Worker 모두 구현돼 있음
 5. 중복 업로드 감지(DB 에 `find_similar_tasks` 함수는 있음, 호출부 없음), 세션 만료 처리
 6. ~~Worker `handleToday`·`callOpenAI` 의 UTC 날짜를 KST 로 교체~~ (v2-4 완료)

@@ -1,73 +1,235 @@
 /**
- * SchoolToDo 네스트 브리핑 — Google Apps Script (웹 앱)
+ * ═══════════════════════════════════════════════════════════════
+ * SchoolToDo Nest Hub 브리핑 (Google Tasks 버전) - Apps Script
+ * ═══════════════════════════════════════════════════════════════
  *
- * ⚠️ 재구성본. 2026-10-11 기준 Apps Script 편집기의 원본을 내려받지 못해, Worker 가 보내는 요청 규격에 맞춰 다시 썼다.
- *    실제 배포된 스크립트(프로젝트 이름 schooltodo-briefing)와 대조해서 원본으로 교체할 것.
+ * 매일 아침 Cloudflare Worker가 호출하여 Google Tasks(할 일)에
+ * 오늘의 브리핑 항목을 생성한다. Nest Hub가 07:30 루틴으로 이 할 일을 낭독.
+ * 본인의 개인 할 일과 섞이거나 삭제되는 것을 막기 위해
+ * 생성되는 할 일 앞에는 항상 "[브리핑]" 접두사가 붙습니다.
  *
- * 흐름: Worker(07:10 KST) → POST 이 웹 앱 → Google Tasks 에 오늘 브리핑 1건 생성
- *       → Google Home 루틴(07:25) "내 오늘 일정 알려줘" 가 Google Tasks 를 읽어 네스트가 말해 준다.
+ * ─── 설치 절차 (매우 중요!) ───────────────────────────────────
+ * 1. 좌측 메뉴에서 '서비스(Services)' 옆에 있는 '+' 버튼 클릭
+ * 2. 'Google Tasks API'를 찾아 선택하고 '추가(Add)' 클릭
+ * (이 과정을 거치지 않으면 Tasks 객체를 찾을 수 없어 에러가 납니다!)
  *
- * 요청:  { "action": "createBriefing", "date": "2026-10-13", "title": "...", "description": "..." }
- * 응답:  { "success": true, "taskId": "..." }  |  { "success": false, "error": "..." }
- *
- * 배포: 배포 → 새 배포 → 웹 앱, 실행 주체 "나", 액세스 "모든 사용자". 그 URL 을 Worker 비밀 BRIEFING_APPS_SCRIPT_URL 에.
- * 서비스: 왼쪽 "서비스 +" 에서 Tasks API 추가 (식별자 Tasks).
+ * 3. 배포
+ * - 배포 → 새 배포 → 유형: 웹 앱
+ * - 실행 대상: 나 (본인)
+ * - 액세스: 모든 사용자 ("누구나"로 설정해야 Worker가 호출 가능)
+ * - 배포 → 웹 앱 URL 복사 및 Worker에 반영
  */
 
-var BRIEFING_TAG = "[SchoolToDo]"; // 같은 날 브리핑이 중복되지 않게 이 태그로 기존 것을 찾아 지운다
+// ═══════════════════════════════════════════════════════════════
+// 설정
+// ═══════════════════════════════════════════════════════════════
+
+// 기본 할 일 목록(Default Task List)을 사용합니다.
+const TASK_LIST_ID = "@default";
+const BRIEFING_PREFIX = "[브리핑] ";
+
+// ═══════════════════════════════════════════════════════════════
+// 메인 핸들러
+// ═══════════════════════════════════════════════════════════════
 
 function doPost(e) {
   try {
-    var body = JSON.parse(e.postData.contents || "{}");
-    if (body.action !== "createBriefing") {
-      return json_({ success: false, error: "unknown action: " + body.action });
+    const data = JSON.parse(e.postData.contents);
+    const action = data.action;
+
+    if (action === "createBriefing") {
+      return createBriefing(data);
     }
-    var date = body.date;                 // YYYY-MM-DD (KST)
-    var title = String(body.title || "오늘 할 일");
-    var notes = String(body.description || "");
-
-    var listId = defaultTaskListId_();
-    removeOldBriefings_(listId, date);
-
-    var due = new Date(date + "T00:00:00+09:00");
-    var task = Tasks.Tasks.insert({
-      title: title,
-      notes: BRIEFING_TAG + " " + date + "\n\n" + notes,
-      due: due.toISOString(),
-      status: "needsAction",
-    }, listId);
-
-    return json_({ success: true, taskId: task.id });
+    if (action === "clearBriefing") {
+      return clearBriefing(data);
+    }
+    if (action === "cleanupBriefing") {
+      return cleanupBriefing(data);
+    }
+    return jsonResponse({ success: false, error: "unknown action: " + action });
   } catch (err) {
-    return json_({ success: false, error: String(err && err.message || err) });
+    return jsonResponse({ success: false, error: err.message });
   }
 }
 
-// 수동 확인용: 편집기에서 실행하면 요청 없이 오늘 브리핑을 하나 만든다
-function testCreate() {
-  var today = Utilities.formatDate(new Date(), "Asia/Seoul", "yyyy-MM-dd");
-  var res = doPost({ postData: { contents: JSON.stringify({ action: "createBriefing", date: today, title: "테스트 브리핑", description: "1. 🟡 테스트" }) } });
-  Logger.log(res.getContent());
+// GET으로 접속 시 동작 확인용
+function doGet(e) {
+  return jsonResponse({
+    service: "schooltodo-tasks-briefing",
+    status: "ready"
+  });
 }
 
-function defaultTaskListId_() {
-  var lists = Tasks.Tasklists.list({ maxResults: 10 });
-  if (!lists.items || !lists.items.length) throw new Error("Google Tasks 목록이 없음");
-  return lists.items[0].id; // 기본 목록 ("내 할 일")
-}
+// ═══════════════════════════════════════════════════════════════
+// 브리핑 할 일(Task) 생성
+// ═══════════════════════════════════════════════════════════════
 
-// 같은 날짜의 이전 브리핑(태그 포함)을 지운다 — Cron 이 두 번 돌아도 하나만 남게
-function removeOldBriefings_(listId, date) {
-  var res = Tasks.Tasks.list(listId, { showCompleted: true, showHidden: true, maxResults: 100 });
-  var items = (res && res.items) || [];
-  for (var i = 0; i < items.length; i++) {
-    var t = items[i];
-    if (t.notes && t.notes.indexOf(BRIEFING_TAG + " " + date) === 0) {
-      Tasks.Tasks.remove(listId, t.id);
+/**
+ * data = {
+ * action: "createBriefing",
+ * date: "2026-04-22",
+ * title: "입학식 준비물, 체육복 세탁, 숙제",
+ * description: "상세:\n1. ...\n2. ..."
+ * }
+ */
+function createBriefing(data) {
+  if (!data.date || !data.title) {
+    return jsonResponse({ success: false, error: "date and title required" });
+  }
+
+  const targetDateStr = data.date; // "2026-04-22"
+
+  let deletedOld = 0;
+  let deletedToday = 0;
+
+  // 1. 기존 브리핑 할 일 정리 (오늘 중복 및 과거 브리핑 삭제)
+  // 개인 할 일을 보호하기 위해 title이 BRIEFING_PREFIX로 시작하는 것만 삭제합니다.
+  let pageToken;
+  do {
+    const response = Tasks.Tasks.list(TASK_LIST_ID, {
+      showCompleted: true,
+      showHidden: true,
+      maxResults: 100,
+      pageToken: pageToken
+    });
+
+    const tasks = response.items;
+    if (tasks) {
+      tasks.forEach(task => {
+        if (task.title && task.title.startsWith(BRIEFING_PREFIX)) {
+          const taskDueDate = task.due ? task.due.substring(0, 10) : ""; // YYYY-MM-DD 추출
+
+          if (!taskDueDate || taskDueDate < targetDateStr) {
+            Tasks.Tasks.remove(TASK_LIST_ID, task.id);
+            deletedOld++;
+          } else if (taskDueDate === targetDateStr) {
+            Tasks.Tasks.remove(TASK_LIST_ID, task.id);
+            deletedToday++;
+          }
+        }
+      });
     }
-  }
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  // 2. 새 할 일 생성 (Tasks API 요구사항에 맞춰 RFC3339 시간 포맷팅)
+  const newTask = {
+    title: BRIEFING_PREFIX + data.title,
+    notes: data.description || "",
+    due: targetDateStr + "T00:00:00.000Z" // Task API는 UTC 기준 자정을 해당 날짜로 인식
+  };
+
+  const createdTask = Tasks.Tasks.insert(newTask, TASK_LIST_ID);
+
+  return jsonResponse({
+    success: true,
+    taskId: createdTask.id,
+    title: newTask.title,
+    date: targetDateStr,
+    deletedToday: deletedToday,
+    deletedOld: deletedOld
+  });
 }
 
-function json_(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+/**
+ * 특정 날짜의 브리핑 삭제 (수동 트리거/디버그용)
+ */
+function clearBriefing(data) {
+  if (!data.date) {
+    return jsonResponse({ success: false, error: "date required" });
+  }
+
+  const targetDateStr = data.date;
+  let deletedCount = 0;
+
+  let pageToken;
+  do {
+    const response = Tasks.Tasks.list(TASK_LIST_ID, {
+      showCompleted: true,
+      showHidden: true,
+      maxResults: 100,
+      pageToken: pageToken
+    });
+
+    const tasks = response.items;
+    if (tasks) {
+      tasks.forEach(task => {
+        if (task.title && task.title.startsWith(BRIEFING_PREFIX)) {
+          const taskDueDate = task.due ? task.due.substring(0, 10) : "";
+          if (taskDueDate === targetDateStr) {
+            Tasks.Tasks.remove(TASK_LIST_ID, task.id);
+            deletedCount++;
+          }
+        }
+      });
+    }
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  return jsonResponse({
+    success: true,
+    deletedCount: deletedCount,
+    date: data.date
+  });
+}
+
+/**
+ * 오늘 이전 날짜의 브리핑 이벤트만 정리
+ */
+function cleanupBriefing(data) {
+  if (!data.date) {
+    return jsonResponse({ success: false, error: "date required" });
+  }
+
+  const targetDateStr = data.date;
+  let deletedOld = 0;
+
+  let pageToken;
+  do {
+    const response = Tasks.Tasks.list(TASK_LIST_ID, {
+      showCompleted: true,
+      showHidden: true,
+      maxResults: 100,
+      pageToken: pageToken
+    });
+
+    const tasks = response.items;
+    if (tasks) {
+      tasks.forEach(task => {
+        if (task.title && task.title.startsWith(BRIEFING_PREFIX)) {
+          const taskDueDate = task.due ? task.due.substring(0, 10) : "";
+          if (taskDueDate && taskDueDate < targetDateStr) {
+            Tasks.Tasks.remove(TASK_LIST_ID, task.id);
+            deletedOld++;
+          }
+        }
+      });
+    }
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  return jsonResponse({
+    success: true,
+    deletedOld: deletedOld,
+    date: data.date
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 유틸 및 테스트
+// ═══════════════════════════════════════════════════════════════
+
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function testCreateBriefing() {
+  const result = createBriefing({
+    date: "2026-04-22",
+    title: "입학식 준비물, 체육복 세탁",
+    description: "상세:\n1. 입학식 준비물 챙기기"
+  });
+  Logger.log(result.getContent());
 }
