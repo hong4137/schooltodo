@@ -21,6 +21,7 @@
 | `timetable_subjects` | 과목 프리셋 | 웹 | |
 | `archive_posts` / `archive_files` | 보관함 글·첨부 | 웹 | |
 | `link_codes` | 텔레그램 연동 6자리 코드 | RPC 전용 | `code`, `user_id`, `expires_at` |
+| `days_off` | 쉬는 날(공휴일·재량휴업·방학). **가족 공용**, 로그인 사용자 전원 읽기/쓰기 | 웹·Worker | `start_date`, `end_date`, `reason`, `kind`(holiday/school/vacation/other) — 006 |
 
 전 테이블 RLS 활성, 정책은 `auth.uid() = user_id`. Worker 는 service_role 키로 RLS 를 우회한다.
 

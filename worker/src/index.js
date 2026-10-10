@@ -668,6 +668,8 @@ async function classifyIntent(env, text) {
 - "complete": 특정 할 일을 완료 처리 (예: "2번 했어", "서류 제출 완료", "1번 끝")
 - "reset": 전체 초기화 (예: "다 지워줘", "전부 삭제", "초기화")
 - "add_task": 새로운 할 일 추가 (예: "내일까지 수저 준비", "3월 5일 서류 제출")
+- "day_off": 학교 안 가는 날(공휴일·재량휴업일·방학) 등록 (예: "내일 학교 안 가", "10/20부터 24일까지 방학", "다음주 금요일 재량휴업일", "오늘 쉬는 날이야")
+- "day_off_list": 쉬는 날 목록 조회 (예: "쉬는 날 알려줘", "휴일 목록", "방학 언제야")
 - "help": 사용법 문의 (예: "뭐 할 수 있어?", "도움말", "사용법")
 - "unknown": 판단 불가
 
@@ -677,11 +679,12 @@ async function classifyIntent(env, text) {
 param 설명:
 - delete일 때: 번호(숫자) 또는 제목(문자열). 예: {"intent": "delete", "param": "3"} 또는 {"intent": "delete", "param": "입학식 참석"}
 - complete일 때: 번호(숫자) 또는 제목(문자열)
+- day_off일 때: {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD", "reason": "방학"}. 하루면 start=end. 이유가 없으면 reason은 "쉬는 날". 날짜는 오늘 날짜 기준으로 계산.
 - 나머지: null`,
         },
         { role: "user", content: text },
       ],
-      max_tokens: 100,
+      max_tokens: 160,
       temperature: 0,
     }),
   });
@@ -774,7 +777,9 @@ async function handleHelp(env, chatId) {
     `• "할 일 보여줘" → 목록 조회\n` +
     `• "3번 삭제해줘" → 삭제\n` +
     `• "2번 했어" → 완료 처리\n` +
-    `• "다 지워줘" → 전체 초기화\n\n` +
+    `• "다 지워줘" → 전체 초기화\n` +
+    `• "내일 학교 안 가", "10/20~24 방학" → 쉬는 날 등록 (알림 쉼)\n` +
+    `• "쉬는 날 알려줘" → 쉬는 날 목록\n\n` +
     `⌨️ <b>명령어</b>\n` +
     `/list · /delete 번호 · /reset · /cancel`;
 
@@ -893,10 +898,17 @@ async function checkAutoProcess(env, chatId) {
 // ══════════════════════════════════════
 // Pickup Reminder
 // ══════════════════════════════════════
-async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek) {
+async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, daysOff = []) {
   const dayMap = { 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri" };
   const todayKey = dayMap[kstDayOfWeek];
   if (!todayKey) return;
+
+  // 가족 공용 쉬는 날이면 전부 건너뜀 (사용자별 쉬는 날은 아래 루프에서 개별 처리)
+  const commonOff = daysOff.find((r) => !r.user_id);
+  if (commonOff) {
+    console.log(`[Pickup] day off (${commonOff.reason}), skipping`);
+    return;
+  }
 
   const nowTotalMin = kstHour * 60 + kstMin;
 
@@ -912,6 +924,7 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek) {
       // Only send for active term pickups
       const activeTerm = pickup.profiles?.active_term;
       if (pickup.term && activeTerm && pickup.term !== activeTerm) continue;
+      if (dayOffFor(daysOff, pickup.user_id)) continue;
       const pickupTime = pickup.pickup_time; // "15:30:00"
       const [ph, pm] = pickupTime.split(":").map(Number);
       const pickupTotalMin = ph * 60 + pm;
@@ -964,6 +977,7 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek) {
     for (const alert of alerts) {
       const activeTerm = alert.profiles?.active_term;
       if (alert.term && activeTerm && alert.term !== activeTerm) continue;
+      if (dayOffFor(daysOff, alert.user_id)) continue;
       const [ah, am] = alert.alert_time.split(":").map(Number);
       const alertTotalMin = ah * 60 + am;
 
@@ -1338,6 +1352,12 @@ export default {
                 case "reset":
                   await handleReset(env, chatId, false);
                   break;
+                case "day_off":
+                  await handleDayOff(env, chatId, intent.param, userTg);
+                  break;
+                case "day_off_list":
+                  await handleDayOffList(env, chatId);
+                  break;
                 case "help":
                   await handleHelp(env, chatId);
                   break;
@@ -1388,6 +1408,13 @@ export default {
     const kstDayOfWeek = kst.getUTCDay(); // 0=sun, 1=mon...
     const isWeekday = kstDayOfWeek >= 1 && kstDayOfWeek <= 5;
 
+    // ── 쉬는 날 (공휴일·재량휴업일·방학) ──
+    const todayStr = getKSTDateString();
+    const daysOff = await getDaysOff(env, todayStr);
+    if (daysOff.length > 0) {
+      console.log(`[DaysOff] ${todayStr}: ${daysOff.map((r) => r.reason).join(", ")}`);
+    }
+
     // ── Nest Hub 브리핑 (KST 07:00~07:20) ──
     // Cron "10 22 * * *" (UTC) = KST 07:10 에 실행됨.
     // Google Home 루틴이 07:25에 "내 오늘 일정 알려줘"로 읽어감.
@@ -1397,7 +1424,7 @@ export default {
 
     // ── 픽업 리마인드 ──
     if (isPickupWindow && isWeekday) {
-      await handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek);
+      await handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, daysOff);
     }
 
     // ── 할 일 알림 ──
@@ -1414,6 +1441,7 @@ export default {
     const label = isMorning ? "오늘" : "내일";
     const emoji = isMorning ? "☀️" : "🌙";
     const notifiedField = isMorning ? "notified_morning" : "notified_evening";
+    const targetDaysOff = isMorning ? daysOff : await getDaysOff(env, targetDate);
 
     try {
       const telegrams = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "user_telegrams", {
@@ -1436,6 +1464,8 @@ export default {
         if (!tasks || tasks.length === 0) continue;
 
         let msg = `${emoji} <b>${label}의 할 일</b> (${tasks.length}개)\n\n`;
+        const off = dayOffFor(targetDaysOff, userId);
+        if (off) msg += `🏖 ${label}은 <b>${escapeHtml(off.reason)}</b>, 학교 안 가는 날이에요.\n\n`;
         tasks.forEach((t, i) => {
           const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
           const time = t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : "";
@@ -1576,4 +1606,103 @@ function getKSTDateString() {
   const m = String(kst.getUTCMonth() + 1).padStart(2, "0");
   const d = String(kst.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 쉬는 날 (days_off): 공휴일 · 재량휴업일 · 방학
+//   user_id 가 NULL 이면 가족 공용. 해당 날짜엔 픽업·시간표 알림을 건너뛴다.
+// ═══════════════════════════════════════════════════════════════
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function getDaysOff(env, dateStr) {
+  try {
+    const rows = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "days_off", {
+      query: `?start_date=lte.${dateStr}&end_date=gte.${dateStr}&select=id,user_id,reason,kind,start_date,end_date`,
+    });
+    if (!Array.isArray(rows)) {
+      if (rows && rows.message) console.error("days_off query error:", rows.message);
+      return [];
+    }
+    return rows;
+  } catch (err) {
+    console.error("days_off query error:", err);
+    return [];
+  }
+}
+
+function dayOffFor(rows, userId) {
+  return (rows || []).find((r) => !r.user_id || r.user_id === userId) || null;
+}
+
+function formatKDate(dateStr) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  const names = ["일", "월", "화", "수", "목", "금", "토"];
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${names[d.getUTCDay()]})`;
+}
+
+function guessDayOffKind(reason) {
+  if (/방학/.test(reason)) return "vacation";
+  if (/공휴일|대체|명절|설|추석|성탄|크리스마스/.test(reason)) return "holiday";
+  if (/재량|휴업|개교|운동회|현장|방과후|학교/.test(reason)) return "school";
+  return "other";
+}
+
+// 자연어: "내일 학교 안 가", "10/20~24 방학" → days_off 등록
+async function handleDayOff(env, chatId, param, userTg) {
+  const p = param && typeof param === "object" ? param : {};
+  const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const start = isDate(p.start) ? p.start : null;
+  const end = isDate(p.end) ? p.end : start;
+  if (!start || end < start) {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+      "언제 쉬는지 날짜를 못 알아들었어요.\n예) \"내일 학교 안 가\", \"10/20부터 10/24까지 방학\"");
+    return;
+  }
+  const reason = (typeof p.reason === "string" && p.reason.trim()) || "쉬는 날";
+  const kind = guessDayOffKind(reason);
+
+  const existing = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "days_off", {
+    query: `?start_date=lte.${end}&end_date=gte.${start}&select=id,reason,start_date,end_date`,
+  });
+  if (Array.isArray(existing) && existing.length > 0) {
+    const e = existing[0];
+    const range = e.start_date === e.end_date ? formatKDate(e.start_date) : `${formatKDate(e.start_date)}~${formatKDate(e.end_date)}`;
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+      `이미 등록돼 있어요: ${range} <b>${escapeHtml(e.reason)}</b>\n바꾸려면 웹앱 캘린더에서 지우고 다시 등록해주세요.`);
+    return;
+  }
+
+  const inserted = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "days_off", {
+    method: "POST",
+    body: { start_date: start, end_date: end, reason, kind, created_by: userTg.user_id },
+  });
+  if (!Array.isArray(inserted) || inserted.length === 0) {
+    console.error("days_off insert error:", inserted);
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "❌ 등록에 실패했어요. 잠시 후 다시 시도해주세요.");
+    return;
+  }
+  const range = start === end ? formatKDate(start) : `${formatKDate(start)} ~ ${formatKDate(end)}`;
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId,
+    `🏖 ${range} <b>${escapeHtml(reason)}</b> 등록했어요.\n이 기간엔 픽업·시간표 알림을 쉬어요.\n\n취소는 웹앱 캘린더에서 할 수 있어요.`);
+}
+
+async function handleDayOffList(env, chatId) {
+  const today = getKSTDateString();
+  const rows = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "days_off", {
+    query: `?end_date=gte.${today}&order=start_date.asc&limit=12&select=reason,kind,start_date,end_date`,
+  });
+  if (!Array.isArray(rows) || rows.length === 0) {
+    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "앞으로 등록된 쉬는 날이 없어요.\n\"내일 학교 안 가\"처럼 말하면 등록할 수 있어요.");
+    return;
+  }
+  const kindEmoji = { holiday: "🎌", school: "🏫", vacation: "🏖", other: "📌" };
+  let msg = `🗓 <b>앞으로 쉬는 날</b>\n\n`;
+  for (const r of rows) {
+    const range = r.start_date === r.end_date ? formatKDate(r.start_date) : `${formatKDate(r.start_date)} ~ ${formatKDate(r.end_date)}`;
+    msg += `${kindEmoji[r.kind] || "📌"} ${range} ${escapeHtml(r.reason)}\n`;
+  }
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, msg);
 }

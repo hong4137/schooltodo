@@ -7,8 +7,9 @@ Supabase(`schoolworks`, ref `sprrelvxxgvrdkmplidu`)에 적용한 SQL 모음.
 | `000_baseline_2026-10-10.sql` | **기준선.** 2026-10-10 운영 DB 를 `pg_dump --schema-only -n public` 으로 받은 것. 테이블 16개·함수 6개·RLS 정책 20개·트리거 1개. 과거 001~003·006~017 누락분은 전부 여기에 녹아 있다. |
 | `004_archive_setup.sql` | 보관함 (기준선에 포함, 이력용) |
 | `005_timetable_setup.sql` | 시간표 (기준선에 포함, 이력용) |
+| `006_days_off.sql` | **쉬는 날** 표 + RLS + 2026-12~2027 공휴일 시드. 2026-10-10 작성, 대시보드 SQL Editor 에서 실행 |
 
-새 변경은 `006_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
+새 변경은 `007_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
 
 ## 기준선 다시 받기
 

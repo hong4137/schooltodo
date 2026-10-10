@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../lib/auth";
 import { fetchBlocks, createBlock, updateBlock, deleteBlock, fetchSubjects, fetchPickups, savePickups, fetchAlerts, fetchTerms, getActiveTerm, setActiveTerm, createTerm, deleteTerm } from "../lib/timetable";
+import { fetchDaysOff, findDayOff, kstTodayStr, dayOffEmoji } from "../lib/daysOff";
 
 const DAYS = ["월", "화", "수", "목", "금"];
 const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri"];
@@ -42,11 +43,16 @@ export default function TimetablePage() {
   const [showEdit, setShowEdit] = useState(false);
   const [showPickupEdit, setShowPickupEdit] = useState(false);
   const [showTermPicker, setShowTermPicker] = useState(false);
+  const [todayOff, setTodayOff] = useState(null);
 
   useEffect(() => { if (user) loadInit(); }, [user]);
 
   async function loadInit() {
     try {
+      const todayStr = kstTodayStr();
+      fetchDaysOff(todayStr, todayStr)
+        .then((rows) => setTodayOff(findDayOff(rows, todayStr)))
+        .catch((err) => console.error("Days off:", err));
       const term = await getActiveTerm(user.id);
       setActiveTermState(term);
       const t = await fetchTerms(user.id);
@@ -195,6 +201,20 @@ export default function TimetablePage() {
           <span style={{ fontSize: 11, color: "var(--text-muted)" }}>픽업</span>
         </div>
       </div>
+
+      {/* 오늘 쉬는 날 */}
+      {todayOff && (
+        <div style={{
+          margin: "0 16px 10px", padding: "10px 14px", borderRadius: 12,
+          background: "#FFF4E6", border: "1px solid #FFD9A0", display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <span style={{ fontSize: 18 }}>{dayOffEmoji(todayOff)}</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#8A5A00" }}>오늘은 {todayOff.reason}</div>
+            <div style={{ fontSize: 12, color: "#A67C2E" }}>학교 안 가는 날이라 픽업·시간표 알림을 쉬어요</div>
+          </div>
+        </div>
+      )}
 
       {/* Empty state */}
       {blocks.length === 0 && alerts.length === 0 ? (
