@@ -1,0 +1,32 @@
+# SchoolToDo 텔레그램 봇 + 알림 Worker
+# 정본은 이 레포. 배포: worker/ 에서 `npx wrangler deploy`
+# 대시보드 Quick Edit 로 고치지 말 것 (2026-04 네스트 브리핑 코드 유실 사고의 원인).
+
+name = "schooltodo-bot"
+main = "src/index.js"
+compatibility_date = "2026-02-22"
+workers_dev = true
+
+# 평문 변수. 여기 없으면 deploy 시 대시보드의 값이 지워진다.
+[vars]
+SUPABASE_URL = "https://sprrelvxxgvrdkmplidu.supabase.co"
+
+# Secrets (대시보드에 이미 등록됨, deploy 해도 유지됨). 새로 넣을 땐 `npx wrangler secret put <NAME>`
+#   BRIEFING_APPS_SCRIPT_URL  OPENAI_API_KEY  SUPABASE_SERVICE_ROLE_KEY
+#   TELEGRAM_BOT_TOKEN  VAPID_PRIVATE_KEY  VAPID_PUBLIC_KEY  VAPID_SUBJECT
+
+# Cron (UTC). 2026-10-10 대시보드 기준 그대로.
+#   30 22 * * *     KST 07:30 오늘 할 일 (텔레그램 + 웹푸시)
+#   10 22 * * *     KST 07:10 네스트 브리핑 (Apps Script → Google Tasks)
+#   0 12 * * *      KST 21:00 내일 할 일
+#   */10 2-9 * * *  KST 11:00~18:50 10분마다 픽업 1시간 전 · 정각 알림 (코드에서 평일·18시 미만만 처리)
+[triggers]
+crons = ["30 22 * * *", "10 22 * * *", "0 12 * * *", "*/10 2-9 * * *"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true

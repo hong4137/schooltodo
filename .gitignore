@@ -3,3 +3,5 @@ dist
 .env
 .env.local
 *.local
+worker/.wrangler
+worker/.dev.vars

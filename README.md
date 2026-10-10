@@ -1,18 +1,35 @@
-# React + Vite
+# SchoolToDo
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+초등학생 자녀의 학교 할 일·시간표·픽업을 가족 2명이 함께 관리하는 PWA.
+알림장 사진을 텔레그램 봇에 보내면 AI 가 할 일을 뽑아 저장하고, 시간표·픽업 시각에 맞춰 텔레그램·웹푸시·구글 네스트로 알려준다.
 
-Currently, two official plugins are available:
+| 축 | 위치 | 레포 |
+|---|---|---|
+| 웹앱 (React + Vite) | https://hong4137.github.io/schooltodo/ | `src/` — main push 시 GitHub Pages 자동 배포 |
+| 봇·알림 Worker | `schooltodo-bot.hong4137.workers.dev` | `worker/` — `npx wrangler deploy` |
+| DB·스토리지 (Supabase `schoolworks`) | `sprrelvxxgvrdkmplidu.supabase.co` | `sql/migrations/`, `docs/SUPABASE_SCHEMA.md` |
+| 네스트 브리핑 (Apps Script) | Google Apps Script | **레포에 없음** — `apps-script/` 로 들여올 것 |
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 개발
 
-## React Compiler
+```bash
+npm ci
+npm run dev        # base 가 /schooltodo/ 라 http://localhost:5173/schooltodo/
+npm run build      # dist/
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Worker 는 `worker/README.md` 참고.
 
-## Expanding the ESLint configuration
+## 꼭 알아야 할 것
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- **Worker 정본은 `worker/src/index.js`.** 대시보드 Quick Edit 로 고치면 레포와 어긋나고, 과거에 그 때문에 네스트 브리핑 코드가 통째로 사라진 적이 있다.
+- 배포했는데 화면이 안 바뀌면 `public/sw.js` 의 `CACHE_NAME` 을 올린다 (현재 `schooltodo-v2`).
+- 날짜는 `toISOString()` 을 쓰지 말고 KST 로 뽑는다. UTC 기준이면 밤 9시 이후 D-Day 가 하루 밀린다.
+- 여러 파일을 고쳤으면 한 커밋으로 묶어 push 한다. 중간 상태로 Pages 빌드가 돌면 실패한다.
+- `src/lib/supabase.js` 에 anon key 가 하드코딩돼 있다. RLS 로 막혀 있어 당장 문제는 아니다.
 
-<!-- build trigger -->
+## 문서
+
+- [docs/HANDOVER.md](docs/HANDOVER.md) — 2026-10-10 인수인계서 (시스템 전체 구조, 시간표 데이터, 함정, 다음 작업)
+- [docs/SUPABASE_SCHEMA.md](docs/SUPABASE_SCHEMA.md) — 테이블·RPC·버킷
+- [worker/README.md](worker/README.md) — Worker 배포·구조
