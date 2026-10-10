@@ -22,6 +22,8 @@
 | `archive_posts` / `archive_files` | 보관함 글·첨부 | 웹 | |
 | `link_codes` | 텔레그램 연동 6자리 코드 | RPC 전용 | `code`, `user_id`, `expires_at` |
 | `days_off` | 쉬는 날(공휴일·재량휴업·방학). **가족 공용**, 로그인 사용자 전원 읽기/쓰기 | 웹·Worker | `start_date`, `end_date`, `reason`, `kind`(holiday/school/vacation/other) — 006 |
+| `job_status` | job 별 마지막 실행 (cron_tick, health_alert) | Worker 쓰기, 웹 읽기 | `job`(PK), `last_run_at`, `last_ok`, `last_detail` — 007 |
+| `job_runs` | 발송 기록 (briefing, digest_morning/evening, pickup, alert). 30일 보관 | Worker 쓰기, 웹 읽기 | `job`, `user_id`, `ran_at`, `ok`, `detail`(jsonb) — 007 |
 
 전 테이블 RLS 활성, 정책은 `auth.uid() = user_id`. Worker 는 service_role 키로 RLS 를 우회한다.
 
@@ -33,6 +35,7 @@
 - `reset_daily_notifications()` — `notified_morning/evening` 초기화.
 - `handle_new_user()` — auth.users 삽입 시 `profiles` 생성 (트리거).
 - `update_updated_at()` — `updated_at` 갱신.
+- `prune_job_runs()` — 30일 지난 `job_runs` 삭제. Worker 가 매일 03:00 호출 (007).
 
 텔레그램 연동 코드 방식은 DB·웹·Worker 모두 구현돼 있다.
 

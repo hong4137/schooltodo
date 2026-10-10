@@ -25,6 +25,7 @@ npx wrangler deploy
 | Cron 분기 | `scheduled()` — 5분마다. 브리핑 07:10 고정, 할 일 알림은 사용자별 `notification_morning/evening`, 픽업은 11~18시 평일 |
 | 할 일 요약 | `sendTaskDigest()` — 아침=오늘, 저녁=내일. `notified_*` 플래그로 중복 방지 |
 | 쉬는 날 | `getDaysOff()` `dayOffFor()` `handleDayOff()` — `days_off` 표 |
+| 실행 기록·헬스체크 | `recordStatus()` `recordRun()` `buildHealthReport()` `GET /health` — `job_status`·`job_runs` |
 | 픽업·정각 알림 | `handlePickupReminder()` — `profiles.active_term` 과 다른 학기는 건너뜀 |
 | 웹푸시 | `sendWebPush()` `sendPushNotification()` `encryptPayload()` (VAPID 직접 구현, JWK import) |
 | 네스트 브리핑 | `runNestHubBriefing()` — `TARGET_USER_ID` 하드코딩, `GET /test-briefing` 으로 수동 실행 |

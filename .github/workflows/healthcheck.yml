@@ -1,0 +1,23 @@
+# Worker 가 살아 있는지 1시간마다 확인한다.
+#   - Worker 가 응답하면: Worker 가 스스로 job_status 를 점검하고, 문제가 있으면 텔레그램으로 경고를 보낸다 (12시간에 한 번).
+#   - Worker 가 응답하지 않거나 503 이면: 이 워크플로가 실패하고 GitHub 이 저장소 주인에게 이메일을 보낸다.
+# 비밀값 불필요. 수동 실행도 가능 (Actions 탭 → Run workflow).
+name: Worker healthcheck
+
+on:
+  schedule:
+    - cron: "7 * * * *"   # 매시 07분 (UTC). GitHub 스케줄은 수십 분 늦을 수 있다.
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /health
+        run: |
+          set -o pipefail
+          curl -sS --max-time 30 -w '\nHTTP %{http_code}\n' \
+            -f "https://schooltodo-bot.hong4137.workers.dev/health?notify=1" | tee health.json
+      - name: Show status
+        if: always()
+        run: cat health.json 2>/dev/null || true

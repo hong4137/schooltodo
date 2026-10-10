@@ -8,8 +8,9 @@ Supabase(`schoolworks`, ref `sprrelvxxgvrdkmplidu`)에 적용한 SQL 모음.
 | `004_archive_setup.sql` | 보관함 (기준선에 포함, 이력용) |
 | `005_timetable_setup.sql` | 시간표 (기준선에 포함, 이력용) |
 | `006_days_off.sql` | **쉬는 날** 표 + RLS + 2026-12~2027 공휴일 시드. 2026-10-10 작성, 대시보드 SQL Editor 에서 실행 |
+| `007_job_status.sql` | Cron 실행 기록(`job_status`, `job_runs`) + 30일 정리 함수. 헬스체크용 |
 
-새 변경은 `007_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
+새 변경은 `008_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
 
 ## 기준선 다시 받기
 

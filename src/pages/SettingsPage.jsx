@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 import { subscribePush, unsubscribePush, isPushSubscribed } from "../lib/push";
+import { fetchHealth, formatAgo, formatKstTime, minutesAgo, JOB_LABELS } from "../lib/health";
 
 export default function SettingsPage() {
   const { user, profile, signOut, fetchProfile } = useAuth();
@@ -211,6 +212,9 @@ export default function SettingsPage() {
         </button>
       </Card>
 
+      {/* 알림 시스템 상태 */}
+      <HealthCard />
+
       {/* Sign out */}
       <button onClick={signOut} style={{ width: "100%", padding: 14, background: "none", border: "1px solid var(--border)", borderRadius: 12, fontSize: 14, color: "var(--red)", cursor: "pointer", marginTop: 8 }}>
         로그아웃
@@ -227,6 +231,53 @@ export default function SettingsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function HealthCard() {
+  const [health, setHealth] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchHealth().then(setHealth).catch((err) => { console.error("Health:", err); setError(err); });
+  }, []);
+
+  const tick = health?.status?.cron_tick;
+  const tickAge = minutesAgo(tick?.last_run_at);
+  const cronOk = tick && tick.last_ok && tickAge !== null && tickAge <= 15;
+  const cronText = !tick ? "기록 없음" : !cronOk ? (tickAge > 15 ? `${tickAge}분째 멈춤` : "마지막 실행 오류") : `정상 · ${formatAgo(tick.last_run_at)}`;
+
+  return (
+    <Card title="알림 시스템 상태">
+      {error ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>상태를 불러올 수 없어요 (007_job_status.sql 실행 여부 확인)</div>
+      ) : !health ? (
+        <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0" }}>불러오는 중...</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border-light)" }}>
+            <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>⏱ 5분 Cron</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: cronOk ? "var(--green)" : "var(--red)" }}>{cronText}</span>
+          </div>
+          {health.runs.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "10px 0" }}>아직 발송 기록이 없어요</div>
+          ) : (
+            health.runs.slice(0, 6).map((r, i) => (
+              <div key={`${r.job}-${r.ran_at}-${i}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < Math.min(health.runs.length, 6) - 1 ? "1px solid var(--border-light)" : "none" }}>
+                <div>
+                  <span style={{ fontSize: 13, color: "var(--text-primary)" }}>{r.ok ? "✅" : "❌"} {JOB_LABELS[r.job] || r.job}</span>
+                  {r.detail?.skipped === "no_tasks" && <span style={{ fontSize: 11, color: "var(--text-disabled)", marginLeft: 6 }}>할 일 없어 건너뜀</span>}
+                  {r.detail?.tasks > 0 && !r.detail?.skipped && <span style={{ fontSize: 11, color: "var(--text-disabled)", marginLeft: 6 }}>{r.detail.tasks}개</span>}
+                  {r.detail?.time && <span style={{ fontSize: 11, color: "var(--text-disabled)", marginLeft: 6 }}>{r.detail.name ? `${r.detail.name} ` : ""}{r.detail.time}</span>}
+                </div>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{formatKstTime(r.ran_at)}</span>
+              </div>
+            ))
+          )}
+          <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 8 }}>GitHub Actions 가 1시간마다 점검하고, 문제가 있으면 텔레그램으로 알려요.</div>
+        </>
+      )}
+    </Card>
   );
 }
 

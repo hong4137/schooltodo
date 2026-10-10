@@ -965,6 +965,7 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
           tag: `pickup-${todayKey}`,
           url: "/schooltodo/",
         });
+        await recordRun(env, "pickup", pickup.user_id, true, { time: pickupTimeStr, day: todayKey });
       }
     }
   } catch (err) {
@@ -1009,6 +1010,7 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
           tag: `alert-${todayKey}-${alert.id}`,
           url: "/schooltodo/",
         });
+        await recordRun(env, "alert", alert.user_id, true, { name: alert.name, time: alertTimeStr, day: todayKey });
       }
     }
   } catch (err) {
@@ -1222,6 +1224,18 @@ export default {
     if (request.method !== "POST") {
       const url = new URL(request.url);
 
+      // 헬스체크: GitHub Actions 가 1시간마다 호출. 문제가 있으면 503 + (notify=1 이면) 텔레그램 경고
+      if (url.pathname === "/health") {
+        const report = await buildHealthReport(env);
+        if (url.searchParams.get("notify") === "1" && !report.ok) {
+          ctx.waitUntil(notifyHealthProblems(env, report));
+        }
+        return new Response(JSON.stringify(report, null, 2), {
+          status: report.ok ? 200 : 503,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+
       // 수동 테스트: Nest Hub 브리핑 즉시 실행
       if (url.pathname === "/test-briefing") {
         ctx.waitUntil(runNestHubBriefing(env));
@@ -1399,6 +1413,19 @@ export default {
   //   11:00~17:59 평일 픽업 1시간 전 · 정각 알림
   // ══════════════════════════════════════
   async scheduled(event, env, ctx) {
+    const t0 = Date.now();
+    try {
+      const detail = await runScheduled(env, ctx);
+      await recordStatus(env, "cron_tick", true, `${detail || ""} (${Date.now() - t0}ms)`);
+    } catch (err) {
+      console.error("scheduled error:", err);
+      await recordStatus(env, "cron_tick", false, String((err && err.message) || err).slice(0, 300));
+    }
+  },
+};
+
+// scheduled() 본체. 반환값은 job_status.last_detail 에 남는 짧은 요약.
+async function runScheduled(env, ctx) {
     const now = new Date();
     const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
     const kstHour = kst.getUTCHours();
@@ -1432,24 +1459,31 @@ export default {
     });
     if (!Array.isArray(profiles)) {
       console.error("profiles query error:", profiles);
-      return;
+      throw new Error("profiles query failed");
     }
 
     let tomorrowDaysOff = null;
+    let digests = 0;
     for (const p of profiles) {
       const morningMin = timeStrToMin(p.notification_morning) ?? 7 * 60 + 30;
       const eveningMin = timeStrToMin(p.notification_evening) ?? 21 * 60;
 
       if (inSlot(nowTotalMin, morningMin, DIGEST_GRACE_MIN)) {
-        await sendTaskDigest(env, p.id, "morning", todayStr, daysOff);
+        digests += await sendTaskDigest(env, p.id, "morning", todayStr, daysOff);
       }
       if (inSlot(nowTotalMin, eveningMin, DIGEST_GRACE_MIN)) {
         if (!tomorrowDaysOff) tomorrowDaysOff = await getDaysOff(env, tomorrowStr);
-        await sendTaskDigest(env, p.id, "evening", tomorrowStr, tomorrowDaysOff);
+        digests += await sendTaskDigest(env, p.id, "evening", tomorrowStr, tomorrowDaysOff);
       }
     }
-  },
-};
+
+    // ── 하루 한 번 (KST 03:00) 30일 지난 실행 기록 정리 ──
+    if (inSlot(nowTotalMin, 3 * 60, CRON_STEP_MIN)) {
+      ctx.waitUntil(supabaseRpc(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "prune_job_runs", {}));
+    }
+
+    return `${todayStr} ${String(kstHour).padStart(2, "0")}:${String(kstMin).padStart(2, "0")} daysOff=${daysOff.length} digests=${digests}`;
+}
 
 // ── 시각 유틸 ──
 function inSlot(nowMin, targetMin, width) {
@@ -1483,7 +1517,7 @@ async function sendTaskDigest(env, userId, kind, targetDate, daysOffRows) {
     const tasks = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "tasks", {
       query: `?user_id=eq.${userId}&due_date=eq.${targetDate}&is_completed=eq.false&${notifiedField}=eq.false&order=due_time.asc.nullslast`,
     });
-    if (!Array.isArray(tasks) || tasks.length === 0) return;
+    if (!Array.isArray(tasks) || tasks.length === 0) return 0;
 
     let msg = `${emoji} <b>${label}의 할 일</b> (${tasks.length}개)\n\n`;
     const off = dayOffFor(daysOffRows, userId);
@@ -1527,8 +1561,125 @@ async function sendTaskDigest(env, userId, kind, targetDate, daysOffRows) {
       });
     }
     console.log(`[Digest] ${kind} ${targetDate} user=${userId} tasks=${tasks.length}`);
+    await recordRun(env, isMorning ? "digest_morning" : "digest_evening", userId, true, {
+      date: targetDate, tasks: tasks.length, telegrams: Array.isArray(telegrams) ? telegrams.length : 0,
+    });
+    return 1;
   } catch (err) {
     console.error("Notification error:", err);
+    await recordRun(env, isMorning ? "digest_morning" : "digest_evening", userId, false, { error: String(err).slice(0, 200) });
+    return 0;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 실행 기록 · 헬스체크
+//   job_status : job 별 마지막 실행 한 줄 (cron_tick, health_alert ...)
+//   job_runs   : 실제 발송 기록 (briefing, digest_*, pickup, alert)
+//   GET /health : GitHub Actions 가 1시간마다 호출 (.github/workflows/healthcheck.yml)
+// ═══════════════════════════════════════════════════════════════
+
+async function recordStatus(env, job, ok, detail) {
+  try {
+    const nowIso = new Date().toISOString();
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/job_status?on_conflict=job`, {
+      method: "POST",
+      headers: { ...supabaseHeaders(env.SUPABASE_SERVICE_ROLE_KEY), Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify({
+        job, last_run_at: nowIso, last_ok: !!ok,
+        last_detail: detail ? String(detail).slice(0, 500) : null, updated_at: nowIso,
+      }),
+    });
+    if (!res.ok) console.error("job_status upsert failed:", res.status, (await res.text()).slice(0, 200));
+  } catch (err) {
+    console.error("job_status error:", err);
+  }
+}
+
+async function recordRun(env, job, userId, ok, detail) {
+  try {
+    const r = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "job_runs", {
+      method: "POST",
+      body: { job, user_id: userId || null, ok: !!ok, detail: detail || null },
+    });
+    if (r && !Array.isArray(r) && r.message) console.error("job_runs insert failed:", r.message);
+  } catch (err) {
+    console.error("job_runs error:", err);
+  }
+}
+
+const HEALTH_CRON_STALE_MIN = 15;      // Cron 이 이 시간 넘게 안 돌면 문제
+const HEALTH_ALERT_COOLDOWN_H = 12;    // 같은 경고는 12시간에 한 번
+
+async function buildHealthReport(env) {
+  const problems = [];
+  const nowMs = Date.now();
+  const kst = new Date(nowMs + 9 * 60 * 60 * 1000);
+  const kstMin = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const todayStr = getKSTDateString();
+  const checkedAt = new Date(nowMs).toISOString();
+
+  const rows = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "job_status", {
+    query: "?select=job,last_run_at,last_ok,last_detail",
+  });
+  if (!Array.isArray(rows)) {
+    problems.push("job_status 표를 읽을 수 없음 (007_job_status.sql 실행했는지 확인)");
+    return { ok: false, checked_at: checkedAt, problems };
+  }
+  const status = {};
+  for (const r of rows) status[r.job] = r;
+
+  const tick = status.cron_tick;
+  let cronAgeMin = null;
+  if (!tick) {
+    problems.push("Cron 실행 기록이 없음 (배포 직후면 5분 뒤 다시 확인)");
+  } else {
+    cronAgeMin = Math.round((nowMs - Date.parse(tick.last_run_at)) / 60000);
+    if (cronAgeMin > HEALTH_CRON_STALE_MIN) problems.push(`Cron 이 ${cronAgeMin}분째 멈춤`);
+    else if (!tick.last_ok) problems.push(`마지막 Cron 실행 오류: ${tick.last_detail || ""}`);
+  }
+
+  const runs = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "job_runs", {
+    query: `?ran_at=gte.${todayStr}T00:00:00%2B09:00&order=ran_at.desc&limit=50&select=job,user_id,ran_at,ok,detail`,
+  });
+  const todayRuns = Array.isArray(runs) ? runs : [];
+  const briefing = todayRuns.find((r) => r.job === "briefing");
+  if (kstMin >= 7 * 60 + 30 && !briefing) problems.push("오늘 네스트 브리핑이 실행되지 않음 (07:10 예정)");
+  else if (briefing && !briefing.ok) problems.push(`오늘 네스트 브리핑 실패: ${JSON.stringify(briefing.detail)}`);
+
+  return {
+    ok: problems.length === 0,
+    checked_at: checkedAt,
+    kst_now: `${todayStr} ${String(kst.getUTCHours()).padStart(2, "0")}:${String(kst.getUTCMinutes()).padStart(2, "0")}`,
+    problems,
+    cron: tick ? { last_run_at: tick.last_run_at, age_min: cronAgeMin, ok: tick.last_ok, detail: tick.last_detail } : null,
+    today_runs: todayRuns.slice(0, 20).map((r) => ({ job: r.job, ran_at: r.ran_at, ok: r.ok, detail: r.detail })),
+    last_alert_at: status.health_alert ? status.health_alert.last_run_at : null,
+  };
+}
+
+async function notifyHealthProblems(env, report) {
+  try {
+    const rows = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "job_status", {
+      query: "?job=eq.health_alert&select=last_run_at",
+    });
+    const last = Array.isArray(rows) && rows[0] ? Date.parse(rows[0].last_run_at) : 0;
+    if (Date.now() - last < HEALTH_ALERT_COOLDOWN_H * 3600 * 1000) return;
+
+    const telegrams = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "user_telegrams", {
+      query: "?is_active=eq.true&select=chat_id",
+    });
+    if (!Array.isArray(telegrams) || telegrams.length === 0) return;
+
+    const msg = `🚨 <b>SchoolToDo 알림 시스템 점검</b>\n\n` +
+      report.problems.map((p) => `• ${escapeHtml(p)}`).join("\n") +
+      `\n\n확인: 웹앱 설정 → 알림 시스템 상태`;
+    for (const tg of telegrams) {
+      await sendMessage(env.TELEGRAM_BOT_TOKEN, tg.chat_id, msg);
+    }
+    await recordStatus(env, "health_alert", true, report.problems.join(" / "));
+  } catch (err) {
+    console.error("health notify error:", err);
   }
 }
 
@@ -1560,6 +1711,7 @@ async function runNestHubBriefing(env) {
 
     if (!tasks || tasks.length === 0) {
       console.log(`[NestHub] ${todayKST}: no tasks, skipping`);
+      await recordRun(env, "briefing", TARGET_USER_ID, true, { date: todayKST, skipped: "no_tasks" });
       return;
     }
 
@@ -1568,6 +1720,7 @@ async function runNestHubBriefing(env) {
 
     if (!env.BRIEFING_APPS_SCRIPT_URL) {
       console.error("[NestHub] BRIEFING_APPS_SCRIPT_URL secret not set");
+      await recordRun(env, "briefing", TARGET_USER_ID, false, { date: todayKST, error: "BRIEFING_APPS_SCRIPT_URL not set" });
       return;
     }
 
@@ -1586,14 +1739,18 @@ async function runNestHubBriefing(env) {
       const result = await res.json();
       if (result.success) {
         console.log(`[NestHub] ${todayKST}: "${title}" — task created`);
+        await recordRun(env, "briefing", TARGET_USER_ID, true, { date: todayKST, title, tasks: tasks.length });
       } else {
         console.error(`[NestHub] Apps Script error:`, result.error);
+        await recordRun(env, "briefing", TARGET_USER_ID, false, { date: todayKST, error: String(result.error).slice(0, 200) });
       }
     } catch (e) {
       console.log(`[NestHub] ${todayKST}: "${title}" — POST sent (response not JSON, likely OK)`);
+      await recordRun(env, "briefing", TARGET_USER_ID, true, { date: todayKST, title, tasks: tasks.length, note: "non-json response" });
     }
   } catch (err) {
     console.error("[NestHub] briefing error:", err);
+    await recordRun(env, "briefing", TARGET_USER_ID, false, { error: String(err).slice(0, 200) });
   }
 }
 
