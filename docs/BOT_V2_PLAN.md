@@ -11,8 +11,9 @@
 1. **확인 루프** — 사진 분석 결과를 먼저 보여주고, 사용자가 "2번은 금요일이야, 3번은 빼" 라고 말하면 고친 뒤 ✅ 저장. 저장 전엔 초안.
 2. **되묻기** — 날짜가 모호하거나("다음 주 수요일"), 아이 이름·반이 불분명하면 봇이 먼저 질문.
 3. **질문 응답** — "이번 주 준비물 뭐 있어?", "수요일 몇 시에 끝나?", "지난번 현장학습 안내문 다시 보여줘", "내일 픽업 몇 시야?"
-4. **대화 기억** — 직전 몇 턴을 기억해 "그거 내일로 미뤄" 같은 지시가 통한다.
-5. **가족 공용** — 두 사람 다 같은 데이터를 보고, 누가 뭘 바꿨는지 봇이 알린다(선택).
+4. **시간표 편집** — "목요일 픽업 17:35 를 18:00 로", "화요일 태권도 빼줘" 가 텔레그램에서 된다. 변경 결과를 가족 모두에게 알린다.
+5. **대화 기억** — 직전 몇 턴을 기억해 "그거 내일로 미뤄" 같은 지시가 통한다.
+6. **가족 공용** — 두 사람 다 같은 데이터를 보고, 누가 뭘 바꿨는지 봇이 알린다(선택).
 
 ## 구조
 
@@ -33,7 +34,10 @@ Telegram ─webhook─▶ Worker
 | `list_tasks(range, include_done)` | 오늘/내일/이번 주/전체 |
 | `add_tasks(tasks[])` | 여러 개 한 번에. 저장 전 `find_similar_tasks` 로 중복 경고 |
 | `update_task(id, patch)` / `complete_task(id)` / `delete_task(id)` | 번호·제목으로 찾아 수정 |
-| `get_timetable(day)` / `get_pickups(day)` / `get_alerts(day)` | 활성 학기 기준 |
+| `get_timetable(day)` / `get_pickups(day)` / `get_alerts(day)` | 활성 학기 기준 조회 |
+| `add_block` / `update_block` / `delete_block` | 시간표 블록 추가·수정·삭제 ("수요일 바이올린 13:00~14:20 음악실"). 삭제·시간 변경은 저장 전 되묻기 |
+| `set_pickups(day, times[])` / `add_alert` / `delete_alert` | 픽업 시각, 정각 알림 |
+| `set_active_term(name)` / `list_terms()` | 학기 전환 ("다음 주부터 2학기 시간표") |
 | `get_days_off(range)` / `add_day_off(start, end, reason)` | 쉬는 날 |
 | `search_documents(query)` | 보관된 알림장 검색 → 제목·요약·사진 URL |
 | `show_draft()` / `edit_draft(patch)` / `save_draft()` / `discard_draft()` | 사진 분석 초안 |
@@ -91,7 +95,7 @@ CREATE TABLE bot_conversations (
 |---|---|---|
 | V2-1 | 대화 상태 표 + Claude tool use 로 텍스트 명령 전부 대체 (`classifyIntent`·`handleTextTask`·`handleSmartDelete`·`handleCompleteTask`·`handleDayOff` 제거) | Worker 400줄 교체, SQL 1개 |
 | V2-2 | 사진 → 초안 → 확인/수정 → 저장. 인라인 버튼 | Worker 200줄, `upload_sessions.draft` 컬럼 |
-| V2-3 | 시간표·픽업·쉬는 날·보관함 질의 도구 | Worker 150줄 |
+| V2-3 | 시간표·픽업·정각 알림·학기 **조회+편집** 도구, 쉬는 날·보관함 질의 | Worker 250줄 |
 | V2-4 | 되묻기 품질 다듬기, 사용량 상한, 가족 변경 알림 | 소 |
 
 V2-1 만 해도 "질문에 대답"이 되고, V2-2 가 "제대로 입력됐는지 서로 확인"이다.
