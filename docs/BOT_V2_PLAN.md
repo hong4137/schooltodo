@@ -116,7 +116,7 @@ CREATE TABLE bot_conversations (
 
 | 단계 | 내용 | 규모 |
 |---|---|---|
-| V2-1 | 대화 상태 표 + Claude tool use 로 텍스트 명령 전부 대체 (`classifyIntent`·`handleTextTask`·`handleSmartDelete`·`handleCompleteTask`·`handleDayOff` 제거) | Worker 400줄 교체, SQL 1개 |
+| V2-1 | ✅ 2026-10-10 — `assistant.js` + `008_bot_conversations.sql`. 기존 핸들러는 키 없을 때 fallback 으로 남겨 둠(V2-2 끝나면 제거) | 완료 |
 | V2-2 | 사진 → 초안 → 확인/수정 → 저장. 인라인 버튼 | Worker 200줄, `upload_sessions.draft` 컬럼 |
 | V2-3 | 시간표·픽업·정각 알림·학기 **조회+편집** 도구, **날짜별 예외**(schedule_exceptions + Worker 알림 반영 + 시간표 표시), 쉬는 날·보관함 질의 | Worker 350줄, SQL 1개, 웹 시간표 수정 |
 | V2-4 | 되묻기 품질 다듬기, 사용량 상한, 가족 변경 알림 | 소 |

@@ -260,6 +260,16 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - 웹 설정 화면 "알림 시스템 상태" 카드에서 같은 기록을 본다.
 - 브리핑은 할 일이 없어 건너뛴 날도 `skipped: no_tasks` 로 기록되므로 "안 돌았음"과 구분된다.
 
+## 9-3. 봇 v2-1 — Claude 대화형 비서 (2026-10-10)
+
+- `worker/src/assistant.js`: `ANTHROPIC_API_KEY` 가 있으면 텍스트 메시지를 Claude Sonnet 5.5 + tool use 로 처리. 없으면 기존 `classifyIntent` 분기 그대로(배포만으로 깨지지 않음).
+- 도구: list/add/update/complete/delete_task, get/add/delete_day_off, get_timetable. 삭제·대량 변경·애매한 날짜는 실행 전 확인.
+- 대화 기억: `bot_conversations`(chat_id 별 최근 20턴, 2시간 지나면 새로). "처음부터"/"새 대화" 로 초기화.
+- 사용량: `bot_usage`(chat_id·날짜). 하루 입력 40만 토큰 넘으면 "오늘은 여기까지". 프롬프트 캐시 켜 둠.
+- 응답은 `ctx.waitUntil` 로 뒤에서, webhook 은 즉시 200 (사진 "완료" 처리도 같은 방식으로 바꿈 → B1 해결). "완료"/"취소" 키워드는 사진 세션이 있을 때만 가로챔 (B2 해결).
+- 설계·남은 단계(사진 초안 확인 V2-2, 시간표 편집·날짜별 예외 V2-3)는 `docs/BOT_V2_PLAN.md`.
+- 필요한 비밀: `ANTHROPIC_API_KEY`. SQL: `008_bot_conversations.sql`.
+
 ## 10. 다음 작업 후보
 
 1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기

@@ -1,5 +1,8 @@
 // SchoolToDo Telegram Bot - Cloudflare Worker v1.1
 // 변경: base64 대신 URL 방식으로 이미지 전달, 에러 디버깅 강화
+// 2026-10-10 v2-1: ANTHROPIC_API_KEY 가 있으면 텍스트 메시지는 assistant.js(Claude)가 처리한다.
+//                  없으면 아래 classifyIntent 기반 기존 흐름. 사진은 아직 기존 흐름.
+import { handleAssistantText } from "./assistant.js";
 
 const COMPLETE_KEYWORDS = ["완료", "끝", "분석", "다했어", "done"];
 const CANCEL_KEYWORDS = ["취소", "cancel"];
@@ -1341,23 +1344,19 @@ export default {
           return new Response("OK");
         }
 
-        // "완료" keyword
+        // "완료"/"취소" 키워드는 사진 세션이 있을 때만 가로챈다. (전엔 세션이 없어도 "숙제 끝" 같은 말을 조용히 삼켰다)
         const lowerText = text.toLowerCase();
-        if (COMPLETE_KEYWORDS.some((kw) => lowerText.includes(kw))) {
-          const session = await getActiveSession(env, chatId);
-          if (session && session.photo_count > 0) {
-            await processSession(env, chatId);
+        const kwSession = text ? await getActiveSession(env, chatId) : null;
+        if (kwSession && COMPLETE_KEYWORDS.some((kw) => lowerText.includes(kw))) {
+          if (kwSession.photo_count > 0) {
+            // 분석은 뒤에서. 바로 200 을 돌려줘야 Telegram 이 같은 메시지를 재전송하지 않는다.
+            ctx.waitUntil(processSession(env, chatId));
           }
           return new Response("OK");
         }
-
-        // Cancel keyword
-        if (CANCEL_KEYWORDS.some((kw) => lowerText.includes(kw))) {
-          const session = await getActiveSession(env, chatId);
-          if (session) {
-            await markSessionCompleted(env, session.id);
-            await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "🗑️ 업로드가 취소되었어요.");
-          }
+        if (kwSession && CANCEL_KEYWORDS.some((kw) => lowerText.includes(kw))) {
+          await markSessionCompleted(env, kwSession.id);
+          await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "🗑️ 업로드가 취소되었어요.");
           return new Response("OK");
         }
 
@@ -1368,6 +1367,14 @@ export default {
             const userTg = await findUserByChatId(env, chatId);
             if (!userTg) {
               await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "❌ 먼저 /link로 계정을 연동해주세요.");
+              return new Response("OK");
+            }
+
+            // v2: Claude 대화형 비서. 응답은 바로 200 으로 돌려주고 뒤에서 처리 (Telegram 재전송 방지)
+            if (env.ANTHROPIC_API_KEY) {
+              ctx.waitUntil(handleAssistantText(env, { chatId, userTg, text }, {
+                supabaseQuery, supabaseHeaders, sendMessage, tg, getKSTDateString, formatKDate,
+              }));
               return new Response("OK");
             }
 

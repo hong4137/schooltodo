@@ -30,11 +30,11 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 
 ## B. 텔레그램 봇 동작
 
-### B1. 사진 분석이 webhook 응답을 막는다 — → v2 에서 처리
+### B1. 사진 분석이 webhook 응답을 막는다 — ✅ 2026-10-10 (ctx.waitUntil, v2-1 과 함께)
 - 근거: "완료" 수신 시 `processSession()` 을 `await` 한 뒤에야 200 응답. OpenAI Vision(여러 장, detail high)은 수십 초 걸릴 수 있어 Telegram 이 webhook 을 재전송하면 같은 세션을 두 번 분석할 수 있다. Worker 요청 시간 제한에도 걸린다.
 - 제안: `ctx.waitUntil(processSession(...))` 로 넘기고 즉시 200. 세션 status 를 `processing` 으로 먼저 바꿔 중복 진입 차단(이미 PATCH 는 하고 있으니 그 뒤 재확인만 추가).
 
-### B2. "완료"가 들어간 말은 세션이 없으면 조용히 삼켜진다 — → v2 에서 처리
+### B2. "완료"가 들어간 말은 세션이 없으면 조용히 삼켜진다 — ✅ 2026-10-10 (세션 있을 때만 가로챔)
 - 근거: `COMPLETE_KEYWORDS.some(kw => lowerText.includes(kw))` 가 먼저 걸리고, 세션이 없으면 아무 답 없이 `return OK`. "서류 제출 완료했어", "숙제 끝"이 전부 무응답. 세션이 있을 때 보낸 일반 텍스트도 무시된다.
 - 제안: 세션이 없으면 키워드 분기를 건너뛰고 `classifyIntent` 로. 세션 중 일반 텍스트에는 "사진 분석 중이에요. 완료/취소를 보내주세요" 안내.
 

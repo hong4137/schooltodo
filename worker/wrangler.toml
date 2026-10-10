@@ -15,6 +15,7 @@ SUPABASE_URL = "https://sprrelvxxgvrdkmplidu.supabase.co"
 #   BRIEFING_APPS_SCRIPT_URL  OPENAI_API_KEY  SUPABASE_SERVICE_ROLE_KEY
 #   TELEGRAM_BOT_TOKEN  VAPID_PRIVATE_KEY  VAPID_PUBLIC_KEY  VAPID_SUBJECT
 #   HEALTH_KEY (관리용 GET 주소 ?key=)   TELEGRAM_WEBHOOK_SECRET (webhook 헤더 검사)  ← 2026-10-10 추가, 없으면 예전처럼 열림
+#   ANTHROPIC_API_KEY — 있으면 텍스트 대화를 Claude(assistant.js)가 처리. 없으면 기존 OpenAI 분기 (v2-1)
 
 # Cron: 5분마다 한 번. 시각 판단은 코드(scheduled)에서 KST 로 한다.
 #   07:10            네스트 브리핑 (Apps Script → Google Tasks)
