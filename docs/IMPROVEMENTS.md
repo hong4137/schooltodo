@@ -30,11 +30,11 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 
 ## B. 텔레그램 봇 동작
 
-### B1. 사진 분석이 webhook 응답을 막는다
+### B1. 사진 분석이 webhook 응답을 막는다 — → v2 에서 처리
 - 근거: "완료" 수신 시 `processSession()` 을 `await` 한 뒤에야 200 응답. OpenAI Vision(여러 장, detail high)은 수십 초 걸릴 수 있어 Telegram 이 webhook 을 재전송하면 같은 세션을 두 번 분석할 수 있다. Worker 요청 시간 제한에도 걸린다.
 - 제안: `ctx.waitUntil(processSession(...))` 로 넘기고 즉시 200. 세션 status 를 `processing` 으로 먼저 바꿔 중복 진입 차단(이미 PATCH 는 하고 있으니 그 뒤 재확인만 추가).
 
-### B2. "완료"가 들어간 말은 세션이 없으면 조용히 삼켜진다
+### B2. "완료"가 들어간 말은 세션이 없으면 조용히 삼켜진다 — → v2 에서 처리
 - 근거: `COMPLETE_KEYWORDS.some(kw => lowerText.includes(kw))` 가 먼저 걸리고, 세션이 없으면 아무 답 없이 `return OK`. "서류 제출 완료했어", "숙제 끝"이 전부 무응답. 세션이 있을 때 보낸 일반 텍스트도 무시된다.
 - 제안: 세션이 없으면 키워드 분기를 건너뛰고 `classifyIntent` 로. 세션 중 일반 텍스트에는 "사진 분석 중이에요. 완료/취소를 보내주세요" 안내.
 
@@ -42,11 +42,11 @@ Worker 1,579줄 · 웹앱 전체를 읽고 찾은 것. 체감 큰 순서로 묶�
 - 근거: 저장 전 중복 검사 없음. DB 에 `find_similar_tasks(user_id, title, due_date)` 함수가 있는데 호출부가 없다.
 - 제안: 저장 전 호출해서 같은 날짜·유사 제목이면 건너뛰고 결과 메시지에 "(이미 있음 N개)" 표시.
 
-### B4. 할 일 제목에 `<`, `&` 가 있으면 메시지 전송이 조용히 실패한다 — △ 아침/저녁 요약·쉬는 날 메시지만 이스케이프 적용. 나머지 핸들러는 미적용
+### B4. 할 일 제목에 `<`, `&` 가 있으면 메시지 전송이 조용히 실패한다 — ✅ 2026-10-10 완료 (전 핸들러 escapeHtml)
 - 근거: `sendMessage` 가 `parse_mode: HTML` 인데 제목·설명을 이스케이프 없이 끼워 넣는다. AI 가 "A&B 학원", "<준비물>" 같은 제목을 뽑으면 Telegram 400.
 - 제안: `escapeHtml()` 한 줄 추가해 사용자 데이터 전부 통과시키기.
 
-### B5. webhook 과 `/test-briefing` 에 인증이 없다
+### B5. webhook 과 `/test-briefing` 에 인증이 없다 — ✅ 2026-10-10 완료 (HEALTH_KEY · TELEGRAM_WEBHOOK_SECRET, 비밀 등록은 사용자)
 - 근거: 누구나 Worker URL 로 가짜 update 를 POST 하면 봇이 반응한다. `/test-briefing` 은 GET 한 번으로 Google Tasks 에 글을 만든다.
 - 제안: Telegram `setWebhook` 의 `secret_token` 을 쓰고 `X-Telegram-Bot-Api-Secret-Token` 헤더 검사. `/test-briefing` 은 `?key=` 비밀값 요구.
 

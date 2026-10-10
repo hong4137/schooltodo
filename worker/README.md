@@ -32,6 +32,7 @@ npx wrangler deploy
 
 ## 주의
 
-- `GET /test-briefing` 은 실제로 Google Tasks 에 쓴다. 테스트할 때 알고 누를 것.
+- 관리용 GET 주소: `/health?key=` (상세), `/test-briefing?key=` (실제 Google Tasks 에 씀), `/setup-webhook?key=` (Telegram webhook + 비밀 토큰 등록). `HEALTH_KEY` 비밀이 없으면 열려 있다.
+- Telegram webhook 은 `TELEGRAM_WEBHOOK_SECRET` 이 있으면 헤더를 검사한다. 비밀을 넣은 뒤 반드시 `/setup-webhook` 을 한 번 열어야 Telegram 쪽에도 토큰이 등록된다.
 - 날짜는 `toISOString()` 을 쓰지 말고 KST 로 변환한 뒤 뽑는다. `handleToday()`(157행)와 `callOpenAI()`(450행)는 아직 UTC 기준 `toISOString()` 을 쓰고 있어 KST 21시 이후 하루 밀릴 수 있다. 미수정.
 - `CRON_STEP_MIN`(5) 은 wrangler.toml 의 Cron 간격과 반드시 같아야 한다. 다르면 알림이 두 번 가거나 빠진다.

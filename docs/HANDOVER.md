@@ -159,6 +159,8 @@ docs/
 `SUPABASE_URL`(Text, wrangler.toml `[vars]`) · `TELEGRAM_BOT_TOKEN` ·
 `VAPID_PRIVATE_KEY` · `VAPID_PUBLIC_KEY` · `VAPID_SUBJECT`
 
+2026-10-10 추가(선택): `HEALTH_KEY` — `/health` 상세·`/test-briefing`·`/setup-webhook` 에 `?key=` 요구. `TELEGRAM_WEBHOOK_SECRET` — Telegram 이 보내는 `X-Telegram-Bot-Api-Secret-Token` 헤더 검사. 둘 다 없으면 예전처럼 열려 있다. GitHub 저장소 비밀 `HEALTH_KEY` 도 같은 값으로.
+
 ### 주요 함수
 
 - `fetch(request, env, ctx)` — 텔레그램 webhook + `GET /test-briefing`
@@ -254,7 +256,7 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 
 - Worker 는 Cron 마다 `job_status.cron_tick` 을 덮어쓰고, 실제 발송(브리핑·아침/저녁 요약·픽업·정각)은 `job_runs` 에 한 줄씩 남긴다.
 - `GET /health` 가 점검: Cron 15분 이상 멈춤, 마지막 실행 오류, 07:30 지났는데 오늘 브리핑 기록 없음. 문제면 503. `?notify=1` 이면 텔레그램으로 경고(12시간에 한 번).
-- `.github/workflows/healthcheck.yml` 이 매시간 `/health?notify=1` 을 호출한다. Worker 가 아예 죽으면 워크플로가 실패해 GitHub 이 이메일을 보낸다. 비밀값 불필요.
+- `.github/workflows/healthcheck.yml` 이 매시간 `/health?notify=1&key=…` 을 호출한다(저장소 비밀 `HEALTH_KEY`). 키가 없으면 `{ok}` 만 받는 생존 확인. Worker 가 아예 죽으면 워크플로가 실패해 GitHub 이 이메일을 보낸다. 비밀값 불필요.
 - 웹 설정 화면 "알림 시스템 상태" 카드에서 같은 기록을 본다.
 - 브리핑은 할 일이 없어 건너뛴 날도 `skipped: no_tasks` 로 기록되므로 "안 돌았음"과 구분된다.
 

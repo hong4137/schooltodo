@@ -142,7 +142,7 @@ async function handleLink(env, chatId, code, from) {
     await sendMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      `✅ 연동 완료! <b>${displayName}</b>님으로 등록되었어요.\n\n이제 학교 알림장 사진을 보내보세요! 📸`
+      `✅ 연동 완료! <b>${escapeHtml(displayName)}</b>님으로 등록되었어요.\n\n이제 학교 알림장 사진을 보내보세요! 📸`
     );
   } else {
     await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "❌ 연동 실패: " + JSON.stringify(result));
@@ -174,7 +174,7 @@ async function handleToday(env, chatId) {
     const check = t.is_completed ? "✅" : "⬜";
     const time = t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : "";
     const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-    msg += `${check} ${pri} ${t.title}${time}\n`;
+    msg += `${check} ${pri} ${escapeHtml(t.title)}${time}\n`;
   });
 
   await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, msg);
@@ -426,10 +426,10 @@ async function processSession(env, chatId) {
     }
 
     // Step 6: Send result
-    let msg = `✅ <b>${aiResult.document_title || "알림장"}</b>에서 ${savedTasks.length}개 할 일을 찾았어요!\n\n`;
+    let msg = `✅ <b>${escapeHtml(aiResult.document_title || "알림장")}</b>에서 ${savedTasks.length}개 할 일을 찾았어요!\n\n`;
     savedTasks.forEach((t, i) => {
       const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-      msg += `${i + 1}. ${pri} <b>${t.title}</b>\n   📅 ${t.due_date}${t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : ""}\n`;
+      msg += `${i + 1}. ${pri} <b>${escapeHtml(t.title)}</b>\n   📅 ${t.due_date}${t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : ""}\n`;
     });
     msg += "\n수정은 웹앱에서 할 수 있어요!";
 
@@ -442,7 +442,7 @@ async function processSession(env, chatId) {
     await sendMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      `❌ 분석 중 오류가 발생했어요.\n\n<code>${errMsg.slice(0, 200)}</code>\n\n다시 시도해주세요.`
+      `❌ 분석 중 오류가 발생했어요.\n\n<code>${escapeHtml(errMsg.slice(0, 200))}</code>\n\n다시 시도해주세요.`
     );
     await markSessionCompleted(env, session.id);
   }
@@ -564,7 +564,7 @@ async function handleList(env, chatId) {
   let msg = `📋 <b>전체 할 일</b> (${tasks.length}개)\n\n`;
   tasks.forEach((t, i) => {
     const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-    msg += `<b>${i + 1}.</b> ${pri} ${t.title}\n   📅 ${t.due_date}\n`;
+    msg += `<b>${i + 1}.</b> ${pri} ${escapeHtml(t.title)}\n   📅 ${t.due_date}\n`;
   });
   msg += "\n삭제: <code>/delete 번호</code>\n전체 초기화: /reset";
 
@@ -602,7 +602,7 @@ async function handleDelete(env, chatId, arg) {
     query: `?id=eq.${target.id}`,
   });
 
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `🗑️ <b>${target.title}</b> (${target.due_date}) 삭제했어요.`);
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `🗑️ <b>${escapeHtml(target.title)}</b> (${target.due_date}) 삭제했어요.`);
 }
 
 // ══════════════════════════════════════
@@ -734,7 +734,7 @@ async function handleCompleteTask(env, chatId, param, userTg) {
     query: `?id=eq.${target.id}`,
   });
 
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `✅ <b>${target.title}</b> 완료! 👏`);
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `✅ <b>${escapeHtml(target.title)}</b> 완료! 👏`);
 }
 
 // ══════════════════════════════════════
@@ -768,7 +768,7 @@ async function handleSmartDelete(env, chatId, param, userTg) {
     query: `?id=eq.${target.id}`,
   });
 
-  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `🗑️ <b>${target.title}</b> (${target.due_date}) 삭제했어요.`);
+  await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `🗑️ <b>${escapeHtml(target.title)}</b> (${target.due_date}) 삭제했어요.`);
 }
 
 // ══════════════════════════════════════
@@ -875,7 +875,7 @@ async function handleTextTask(env, chatId, text, userTg) {
     let msg = `✏️ ${savedTasks.length}개 할 일을 추가했어요!\n\n`;
     savedTasks.forEach((t, i) => {
       const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-      msg += `${i + 1}. ${pri} <b>${t.title}</b>\n   📅 ${t.due_date}${t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : ""}\n`;
+      msg += `${i + 1}. ${pri} <b>${escapeHtml(t.title)}</b>\n   📅 ${t.due_date}${t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : ""}\n`;
     });
 
     await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, msg);
@@ -996,7 +996,7 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
           query: `?user_id=eq.${alert.user_id}&is_active=eq.true`,
         });
 
-        const msg = `${emoji} <b>${alert.name}</b>\n\n⏰ ${alertTimeStr}`;
+        const msg = `${emoji} <b>${escapeHtml(alert.name)}</b>\n\n⏰ ${alertTimeStr}`;
 
         if (telegrams && telegrams.length > 0) {
           for (const tg of telegrams) {
@@ -1223,21 +1223,26 @@ export default {
   async fetch(request, env, ctx) {
     if (request.method !== "POST") {
       const url = new URL(request.url);
+      // 관리용 주소는 HEALTH_KEY 가 등록돼 있으면 ?key= 로 막는다. 등록 전엔 예전처럼 열려 있다.
+      const admin = isAdminRequest(env, url);
 
-      // 헬스체크: GitHub Actions 가 1시간마다 호출. 문제가 있으면 503 + (notify=1 이면) 텔레그램 경고
+      // 헬스체크: GitHub Actions 가 1시간마다 호출. 문제가 있으면 503.
+      //   키 없이: {ok} 만 (생존 확인용).  키 있으면: 상세 + notify=1 로 텔레그램 경고.
       if (url.pathname === "/health") {
         const report = await buildHealthReport(env);
-        if (url.searchParams.get("notify") === "1" && !report.ok) {
+        if (admin && url.searchParams.get("notify") === "1" && !report.ok) {
           ctx.waitUntil(notifyHealthProblems(env, report));
         }
-        return new Response(JSON.stringify(report, null, 2), {
+        const body = admin ? report : { ok: report.ok, checked_at: report.checked_at };
+        return new Response(JSON.stringify(body, null, 2), {
           status: report.ok ? 200 : 503,
           headers: { "Content-Type": "application/json; charset=utf-8" },
         });
       }
 
-      // 수동 테스트: Nest Hub 브리핑 즉시 실행
+      // 수동 테스트: Nest Hub 브리핑 즉시 실행 (실제 Google Tasks 에 쓴다)
       if (url.pathname === "/test-briefing") {
+        if (!admin) return new Response("Unauthorized", { status: 401 });
         ctx.waitUntil(runNestHubBriefing(env));
         return new Response(
           "Briefing triggered. Check Google Tasks + Cloudflare logs.",
@@ -1245,7 +1250,26 @@ export default {
         );
       }
 
+      // Telegram webhook 을 이 Worker 로 (비밀 토큰 포함) 다시 등록
+      if (url.pathname === "/setup-webhook") {
+        if (!admin) return new Response("Unauthorized", { status: 401 });
+        const result = await setupTelegramWebhook(env, url.origin);
+        return new Response(JSON.stringify(result, null, 2), {
+          status: result.ok ? 200 : 500,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+
       return new Response("SchoolToDo Bot v1.1 is running!", { status: 200 });
+    }
+
+    // Telegram webhook 비밀 토큰 검사 (TELEGRAM_WEBHOOK_SECRET 등록 + /setup-webhook 실행 후부터 유효)
+    if (env.TELEGRAM_WEBHOOK_SECRET) {
+      const got = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      if (got !== env.TELEGRAM_WEBHOOK_SECRET) {
+        console.warn("webhook: bad secret token");
+        return new Response("Unauthorized", { status: 401 });
+      }
     }
 
     try {
@@ -1606,6 +1630,31 @@ async function recordRun(env, job, userId, ok, detail) {
   } catch (err) {
     console.error("job_runs error:", err);
   }
+}
+
+// 관리용 GET 주소(/health 상세, /test-briefing, /setup-webhook) 보호.
+// HEALTH_KEY 가 없으면 예전처럼 열어 둔다 (설정 전 동작 유지).
+function isAdminRequest(env, url) {
+  if (!env.HEALTH_KEY) return true;
+  const key = url.searchParams.get("key") || "";
+  return key.length > 0 && key === env.HEALTH_KEY;
+}
+
+// Telegram 에 webhook 주소와 비밀 토큰을 등록한다. 결과로 getWebhookInfo 를 돌려준다.
+async function setupTelegramWebhook(env, origin) {
+  const body = { url: `${origin}/`, allowed_updates: ["message", "callback_query"], drop_pending_updates: false };
+  if (env.TELEGRAM_WEBHOOK_SECRET) body.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
+  const set = await tg(env.TELEGRAM_BOT_TOKEN, "setWebhook", body);
+  const info = await tg(env.TELEGRAM_BOT_TOKEN, "getWebhookInfo", {});
+  const r = info && info.result ? info.result : {};
+  return {
+    ok: !!(set && set.ok),
+    set_result: set && set.description,
+    webhook_url: r.url,
+    secret_token_enabled: !!env.TELEGRAM_WEBHOOK_SECRET,
+    pending_update_count: r.pending_update_count,
+    last_error: r.last_error_message || null,
+  };
 }
 
 const HEALTH_CRON_STALE_MIN = 15;      // Cron 이 이 시간 넘게 안 돌면 문제
