@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS public.schedule_exceptions (
   created_by   uuid,
   created_at   timestamptz DEFAULT now(),
   CONSTRAINT schedule_exceptions_range_check CHECK (end_date >= start_date),
-  CONSTRAINT schedule_exceptions_action_check CHECK (
+  -- 이름 주의: 칼럼 인라인 CHECK 가 자동으로 schedule_exceptions_action_check 를 쓰므로 다른 이름이어야 한다
+  CONSTRAINT schedule_exceptions_action_fields_check CHECK (
     (action = 'skip') OR
     (action = 'move' AND new_start IS NOT NULL) OR
     (action = 'add'  AND kind = 'oneoff' AND target_name IS NOT NULL AND new_start IS NOT NULL)
