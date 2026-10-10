@@ -293,10 +293,14 @@ function buildSystemPrompt(todayStr, userTg, draftSession) {
     draftNote = `
 
 [저장 대기 중인 알림장 초안] 제목: ${dr.document_title}
-${lines.join("\n") || "(할 일 없음)"}
+요약: ${dr.summary || ""}
+사진에서 읽은 사실: ${(dr.key_facts || []).join(" / ") || "(없음)"}
+할 일 목록:
+${lines.join("\n") || "(비어 있음)"}
 ${dr.unclear && dr.unclear.length ? "확인 필요: " + dr.unclear.join(" / ") : ""}
 - 사용자가 번호를 말하면 이 초안의 번호다. 고치자고 하면 set_draft_tasks 로 전체 목록(고친 것 반영, 나머지 그대로)을 넘기고, 돌아온 초안을 그대로 보여준다.
-- "저장", "맞아", "ㅇㅇ", "좋아", "그대로" → save_draft. "취소", "버려" → discard_draft.
+- 목록이 비어 있는데 "넣어줘"라고 하면, 위 '사진에서 읽은 사실'을 바탕으로 할 일을 만들어 set_draft_tasks 로 넘기고 보여준 뒤 저장할지 묻는다. 지난 날짜도 사용자가 원하면 넣는다.
+- "저장", "맞아", "ㅇㅇ", "좋아", "그대로" → save_draft. "취소", "버려", "닫아" → discard_draft.
 - 초안과 상관없는 질문이면 평소처럼 답하되, 초안이 기다리고 있다고 한 줄 덧붙인다.`;
   }
   return `너는 "SchoolToDo" 가족 비서야. 초등학생 자녀를 둔 부모 두 명이 텔레그램으로 쓴다.

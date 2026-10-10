@@ -35,9 +35,10 @@ const SUBMIT_DRAFT_TOOL = {
       document_type: { type: "string", enum: ["notice", "letter", "schedule", "receipt", "other"] },
       summary: { type: "string", description: "한두 문장 요약" },
       tasks: { type: "array", items: DRAFT_TASK_SCHEMA },
-      unclear: { type: "array", items: { type: "string" }, description: "사진에서 확실히 못 읽은 것, 부모에게 확인할 질문. 없으면 빈 배열" },
+      key_facts: { type: "array", items: { type: "string" }, description: "사진의 핵심 사실(날짜·기간·항목·장소·금액·연락처)을 한 줄씩. 할 일이 없어도 반드시 채운다. 나중에 사용자가 '그거 넣어줘'라고 할 때 쓴다" },
+      unclear: { type: "array", items: { type: "string" }, description: "확실히 못 읽은 것이나 부모에게 확인할 질문(예: 지난 마감을 넣을지). 없으면 빈 배열" },
     },
-    required: ["document_title", "document_type", "summary", "tasks", "unclear"],
+    required: ["document_title", "document_type", "summary", "tasks", "key_facts", "unclear"],
     additionalProperties: false,
   },
 };
@@ -53,6 +54,8 @@ function visionSystemPrompt(todayStr) {
 - description 에는 사진에서 읽은 장소·시간·층·준비물 목록·금액·연락처·주의사항을 구체적으로. 지어내지 않는다.
 - 화면 캡처면 앱 UI 요소는 무시.
 - 날짜나 내용이 흐릿해 확신이 없으면 unclear 에 질문으로 적는다. (예: "제출 마감이 14일인지 16일인지 흐릿함")
+- 마감·날짜가 이미 지난 항목은 네가 빼지 말고 tasks 에 그대로 넣되, unclear 에 "○○(10/8)은 이미 지났는데 넣을까요?" 라고 적는다. 뺄지는 부모가 정한다.
+- key_facts 에는 할 일 여부와 상관없이 사진에서 읽은 날짜·기간·항목·장소·금액을 한 줄씩 적는다. (예: "방과후 신청 기간 10/2~10/8", "배드민턴 1~6학년 월·수")
 - 사용자가 사진과 함께 보낸 말이 있으면 그 말을 우선한다.
 
 반드시 submit_draft 도구로만 답한다.`;
@@ -124,6 +127,7 @@ export async function analyzePhotos(env, deps, { images, hint, todayStr }) {
           document_type: d.document_type || "notice",
           summary: d.summary || "",
           tasks: (d.tasks || []).map(normalizeTask).filter(Boolean),
+          key_facts: Array.isArray(d.key_facts) ? d.key_facts.map((s) => String(s).slice(0, 120)).slice(0, 12) : [],
           unclear: Array.isArray(d.unclear) ? d.unclear.slice(0, 5) : [],
         },
         usage,
@@ -173,6 +177,9 @@ export function renderDraft(draft, esc) {
   if (draft.unclear && draft.unclear.length) {
     msg += `\n❓ 확인 필요\n` + draft.unclear.map((u) => `• ${esc(u)}`).join("\n") + "\n";
   }
+  if (!draft.tasks.length && draft.key_facts && draft.key_facts.length) {
+    msg += `\n읽은 내용\n` + draft.key_facts.map((f) => `• ${esc(f)}`).join("\n") + "\n";
+  }
   msg += `\n맞으면 <b>✅ 저장</b>, 고칠 게 있으면 말씀해 주세요.\n(예: "2번은 금요일로", "3번 빼줘", "1번 제목은 체육복으로")`;
   return msg;
 }
@@ -190,8 +197,10 @@ export function draftKeyboard(sessionId) {
 const q = (env, deps, path, opts) => deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, path, opts);
 
 export async function getDraftSession(env, deps, chatId) {
+  // 하루 넘게 방치된 초안은 없는 것으로 친다
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const rows = await q(env, deps, "upload_sessions", {
-    query: `?chat_id=eq.${chatId}&status=eq.draft&order=created_at.desc&limit=1`,
+    query: `?chat_id=eq.${chatId}&status=eq.draft&created_at=gte.${since}&order=created_at.desc&limit=1`,
   });
   return Array.isArray(rows) && rows[0] ? rows[0] : null;
 }
@@ -221,11 +230,19 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
     if (deps.addUsage) await deps.addUsage(env, chatId, todayStr, usage);
 
     if (draft.tasks.length === 0) {
-      let msg = "🤔 할 일을 찾지 못했어요.";
-      if (draft.unclear.length) msg += "\n\n" + draft.unclear.map((u) => `• ${esc(u)}`).join("\n");
-      msg += "\n\n사진이 선명한지 확인하고 다시 보내거나, 글로 직접 말씀해 주세요.";
-      await deps.sendMessage(token, chatId, msg);
-      await patchSession(env, deps, session.id, { status: "completed", draft });
+      // 할 일은 없지만 사진 맥락(key_facts)은 초안으로 남겨 둔다 → "그거라도 넣어줘" 가 이어진다
+      let msg = `📋 <b>${esc(draft.document_title)}</b>\n`;
+      if (draft.summary) msg += `<i>${esc(draft.summary)}</i>\n`;
+      msg += "\n🤔 지금 해야 할 일은 못 찾았어요.";
+      if (draft.key_facts.length) msg += "\n\n읽은 내용\n" + draft.key_facts.map((f) => `• ${esc(f)}`).join("\n");
+      if (draft.unclear.length) msg += "\n\n❓ 확인 필요\n" + draft.unclear.map((u) => `• ${esc(u)}`).join("\n");
+      msg += "\n\n넣고 싶은 게 있으면 말씀해 주세요. (예: \"신청 마감 넣어줘\", \"지난 일정이라도 넣어줘\")";
+      const sent = await deps.tg(token, "sendMessage", {
+        chat_id: chatId, text: msg, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "❌ 닫기", callback_data: `draft:cancel:${session.id}` }]] },
+      });
+      const messageId = sent && sent.result ? sent.result.message_id : null;
+      await patchSession(env, deps, session.id, { status: "draft", draft, draft_message_id: messageId });
       return;
     }
 
