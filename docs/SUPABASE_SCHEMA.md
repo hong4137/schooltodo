@@ -1,7 +1,7 @@
 # Supabase 스키마 (코드 기준 정리, 2026-10-10)
 
 프로젝트 `schoolworks` · ref `sprrelvxxgvrdkmplidu` · 서울 리전.
-정확한 DDL 은 아직 레포에 없다(`sql/migrations/README.md` 의 덤프 절차 참고). 아래는 웹앱(`src/lib/*.js`)과 Worker(`worker/src/index.js`)가 실제로 읽고 쓰는 객체를 추린 것이다.
+정확한 DDL 은 `sql/migrations/000_baseline_2026-10-10.sql`(RLS 정책·함수·트리거 포함). 아래는 읽기용 요약이다.
 
 ## 테이블
 
@@ -20,15 +20,20 @@
 | `timetable_alerts` | 정각 알림(도보하원·이동) | 웹·Worker | `term`, `day`, `alert_time`, `label` |
 | `timetable_subjects` | 과목 프리셋 | 웹 | |
 | `archive_posts` / `archive_files` | 보관함 글·첨부 | 웹 | |
+| `link_codes` | 텔레그램 연동 6자리 코드 | RPC 전용 | `code`, `user_id`, `expires_at` |
 
 전 테이블 RLS 활성, 정책은 `auth.uid() = user_id`. Worker 는 service_role 키로 RLS 를 우회한다.
 
-## RPC 함수
+## 함수 (public, 기준선 덤프 기준)
 
-- `generate_link_code()` — 웹 설정 화면에서 호출. 텔레그램 연동용 6자리 코드 발급.
-- `verify_link_code(code, ...)` — Worker `/link <코드>` 에서 호출.
+- `generate_link_code()` — 웹 설정 화면에서 호출. `link_codes` 에 6자리 코드 발급.
+- `verify_link_code(...)` — Worker `/link <코드>` 에서 호출. 코드 검증 후 `user_telegrams` 연결.
+- `find_similar_tasks(...)` — 중복 할 일 탐지용. 호출부는 아직 없음.
+- `reset_daily_notifications()` — `notified_morning/evening` 초기화.
+- `handle_new_user()` — auth.users 삽입 시 `profiles` 생성 (트리거).
+- `update_updated_at()` — `updated_at` 갱신.
 
-(인수인계서에는 "연동 코드 방식 미구현"으로 적혀 있으나, 양쪽 코드에 호출부가 있다. DB 쪽 함수 존재 여부는 덤프로 확인할 것.)
+텔레그램 연동 코드 방식은 DB·웹·Worker 모두 구현돼 있다.
 
 ## Storage 버킷
 

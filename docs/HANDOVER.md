@@ -8,8 +8,8 @@
 - **Worker 정본 편입 완료.** Cloudflare API로 대시보드 배포본(2026-09-02 업로드, 1,579줄)을 받아 `worker/src/index.js` 에 넣었다. `wrangler.toml` 에 Cron 4개·`SUPABASE_URL` 평문 변수를 선언했고 `wrangler deploy --dry-run` 통과.
 - **네스트 브리핑 복구본은 배포돼 있다.** 배포본에 `runNestHubBriefing` · `GET /test-briefing` 이 들어 있다. 실제 Google Tasks 생성까지 됐는지는 아직 미확인(`/test-briefing` 은 실데이터에 쓰므로 호출하지 않았다).
 - **Cron 4번은 평일 한정이 아니다.** 대시보드 실제 값은 `*/10 2-9 * * *` (매일). 평일 필터는 코드(`isWeekday`)가 한다.
-- **텔레그램 연동 코드(`/link` + 코드)는 코드상 구현돼 있다.** 웹 `generate_link_code` RPC, Worker `verify_link_code` RPC 호출부가 모두 있다. 10장 4번 "미구현"은 DB 함수 존재 여부만 확인하면 된다.
-- **SQL 누락분은 복원 불가.** 웹 세션 산출물이 사라졌다. `supabase db dump` 로 기준선을 받는 절차를 `sql/migrations/README.md` 에 적었다. anon 키로는 스키마 조회가 막혀 있고(service_role 전용), Supabase CLI 토큰은 Windows 자격증명 관리자에 있어 자동화하지 않았다.
+- **텔레그램 연동 코드(`/link` + 코드)는 구현돼 있다.** DB 에 `link_codes` 테이블과 `generate_link_code`·`verify_link_code` 함수가 있고, 웹·Worker 호출부도 있다. 10장 4번은 완료 항목.
+- **SQL 기준선 확보.** 누락된 001~003·006~017 원본은 사라졌지만, 운영 DB 를 `pg_dump` 로 받아 `sql/migrations/000_baseline_2026-10-10.sql` 에 넣었다(테이블 16개·함수 6개·정책 20개). 덤프 절차는 `sql/migrations/README.md`.
 - **Apps Script 사본은 아직 없다.** Google Apps Script 편집기에서 `briefing.gs` 를 복사해 `apps-script/` 에 넣어야 한다.
 - `toISOString()` 잔존: Worker `handleToday()`(157행)·`callOpenAI()`(450행)는 여전히 UTC 날짜를 쓴다. 미수정.
 
@@ -39,7 +39,7 @@
 ```
 ① 웹앱 (React + Vite)          → GitHub Pages        ✅ 레포에 있음
 ② 봇/알림 (Cloudflare Worker)   → Cloudflare 대시보드  ✅ worker/ 로 편입 (2026-10-10)
-③ DB/스토리지 (Supabase)        → Supabase 콘솔        △ SQL 2개 + 코드 기준 스키마 문서
+③ DB/스토리지 (Supabase)        → Supabase 콘솔        ✅ 기준선 덤프 000 + 004·005 (2026-10-10)
 ④ 네스트 브리핑 (Apps Script)   → Google Apps Script   ❌ 레포에 없음
 ```
 
@@ -184,7 +184,7 @@ worker/
   src/index.js          ✅ 대시보드 정본 그대로 (1,579줄)
   wrangler.toml         ✅ Cron 4개 + vars
 sql/migrations/
-  001~003, 006~017      ❌ 누락 — DB 덤프로 기준선 대체 (README 참고)
+  000_baseline          ✅ 운영 DB pg_dump (누락 001~003·006~017 을 대체)
   004, 005              ✅
 apps-script/
   briefing.gs           ❌ Apps Script 편집기에서 복사해 올 것
@@ -241,11 +241,11 @@ apps-script/
 
 ## 10. 다음 작업 후보
 
-1. ~~worker/ 레포 편입~~ 완료. 남은 것: `supabase db dump` 기준선 받기, Apps Script 사본 넣기
+1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기
 2. 네스트 브리핑에 시간표·픽업 시간 추가 (현재는 할 일만 읽어줌)
 3. 2학기 정규수업 시간표 실제와 대조
-4. 텔레그램 연동 코드 방식 — 코드는 있음, DB 함수(`generate_link_code`·`verify_link_code`) 존재만 확인
-5. 중복 업로드 감지, 세션 만료 처리
+4. ~~텔레그램 연동 코드 방식~~ — DB·웹·Worker 모두 구현돼 있음
+5. 중복 업로드 감지(DB 에 `find_similar_tasks` 함수는 있음, 호출부 없음), 세션 만료 처리
 6. Worker `handleToday`·`callOpenAI` 의 UTC 날짜를 KST 로 교체
 
 ---
