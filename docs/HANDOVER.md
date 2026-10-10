@@ -173,7 +173,7 @@ docs/
 
 ### 하드코딩 주의
 
-`runNestHubBriefing()` 안에 `TARGET_USER_ID = "fdb9f068-..."`가 박혀 있다. 브리핑은 이 한 사용자만 대상으로 한다.
+브리핑 대상은 `profiles.briefing_enabled = true` 인 계정(011). 2026-10-11 전엔 `TARGET_USER_ID` 하드코딩이었고, 플래그가 없으면 그 계정으로 fallback.
 
 ---
 
@@ -296,12 +296,23 @@ Cron 이 5분 간격이라 픽업 17:35의 1시간 전 알림은 16:35 슬롯에
 - **OpenAI v1 코드 제거**: processSession·callOpenAI·classifyIntent·handleTextTask·handleSmartDelete·handleCompleteTask·checkAutoProcess·handleDayOff(List) 삭제. `OPENAI_API_KEY` 는 더 안 쓴다. `ANTHROPIC_API_KEY` 가 없으면 대화는 안내 메시지만.
 - `/today` 의 UTC 날짜 버그(B6) 수정.
 
+## 9-7. 마무리 묶음 (2026-10-11)
+
+- **네스트 브리핑(A5·D2)**: `runNestHubBriefing()` 이 할 일 + 지난 할 일 + 오늘 일정(방과후·늘봄·학원, 오전 정규 수업 제외) + 정각 알림 + 픽업 + 쉬는 날 + 날짜별 예외를 담는다. 할 일이 없는 날도 만든다(아무것도 없는 날만 건너뜀). 대상은 `profiles.briefing_enabled`(011) — 하드코딩 제거(없으면 예전 계정으로 fallback).
+- **픽업 10분 전 2차 알림(A3)**: `profiles.pickup_second_reminder`(011), 설정 화면 토글. 켠 사람만.
+- **아침 요약에 지난 할 일(A4)**: 미완료 3개까지 꼬리에.
+- **웹**: `fetchTasks` 의 `documents!inner` 제거(C2, 텍스트 할 일 누락 가능성), 완료 섹션 높이(C4), `sw.js` CACHE_NAME 을 빌드 시각으로 자동 치환(C5, `scripts/stamp-sw.mjs`), anon 키 `VITE_SUPABASE_*` 환경변수 우선(C6, `.env.example`).
+- **Worker 자동 배포(D3)**: `.github/workflows/worker-deploy.yml` — 저장소 비밀 `CLOUDFLARE_API_TOKEN` 이 있을 때만 `worker/**` 변경 시 배포. 없으면 건너뜀(로컬 배포 유지).
+- **Apps Script**: `apps-script/briefing.gs` 는 **재구성본**(Drive 연결 만료로 원본 미확보). 편집기 원본과 대조 후 교체. 규격은 `apps-script/README.md`.
+- 이제 `public/sw.js` 의 CACHE_NAME 을 손으로 올릴 필요가 없다(9장 "PWA 서비스워커 캐시" 항목은 더 이상 해당 없음).
+
 ## 10. 다음 작업 후보
 
 1. ~~worker/ 편입, SQL 기준선~~ 완료. 남은 것: Apps Script 사본 넣기
 2. 네스트 브리핑에 시간표·픽업 시간 추가 (현재는 할 일만 읽어줌)
 3. 2학기 정규수업 시간표 실제와 대조
 3-1. 매년 12월: 다음 해 공휴일을 `days_off` 에 추가
+3-2. Apps Script 원본을 `apps-script/briefing.gs` 와 대조해 교체
 4. ~~텔레그램 연동 코드 방식~~ — DB·웹·Worker 모두 구현돼 있음
 5. 중복 업로드 감지(DB 에 `find_similar_tasks` 함수는 있음, 호출부 없음), 세션 만료 처리
 6. ~~Worker `handleToday`·`callOpenAI` 의 UTC 날짜를 KST 로 교체~~ (v2-4 완료)

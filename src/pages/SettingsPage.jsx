@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushLoading, setPushLoading] = useState(true);
   const [pickupReminder, setPickupReminder] = useState(profile?.pickup_reminder_enabled !== false);
+  const [pickupSecond, setPickupSecond] = useState(!!profile?.pickup_second_reminder);
 
   useEffect(() => {
     if (user) {
@@ -26,6 +27,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (profile) {
       setPickupReminder(profile.pickup_reminder_enabled !== false);
+      setPickupSecond(!!profile.pickup_second_reminder);
     }
   }, [profile]);
 
@@ -102,6 +104,7 @@ export default function SettingsPage() {
         notification_morning: roundTo5(morning) + ":00",
         notification_evening: roundTo5(evening) + ":00",
         pickup_reminder_enabled: pickupReminder,
+        pickup_second_reminder: pickupSecond,
       })
       .eq("id", user.id);
     setSaving(false);
@@ -203,6 +206,23 @@ export default function SettingsPage() {
               width: 22, height: 22, borderRadius: 11, background: "#fff",
               position: "absolute", top: 3,
               left: pickupReminder ? 25 : 3, transition: "left 0.2s",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+            }} />
+          </button>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderTop: "1px solid var(--border-light)", opacity: pickupReminder ? 1 : 0.4 }}>
+          <div>
+            <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>⏰ 픽업 10분 전 한 번 더</span>
+            <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>1시간 전 알림에 더해 10분 전에도</div>
+          </div>
+          <button onClick={() => pickupReminder && setPickupSecond(!pickupSecond)} style={{
+            width: 50, height: 28, borderRadius: 14, border: "none", cursor: "pointer",
+            background: pickupSecond && pickupReminder ? "#FF8C42" : "#CED4DA", position: "relative", transition: "background 0.2s",
+          }}>
+            <div style={{
+              width: 22, height: 22, borderRadius: 11, background: "#fff",
+              position: "absolute", top: 3,
+              left: pickupSecond && pickupReminder ? 25 : 3, transition: "left 0.2s",
               boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
             }} />
           </button>

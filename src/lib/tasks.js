@@ -3,11 +3,11 @@ import { supabase } from "./supabase";
 export async function fetchTasks(userId) {
   const { data, error } = await supabase
     .from("tasks")
+    // documents 는 LEFT 조인. (예전엔 documents!inner 가 섞여 있어 텍스트로 추가한 할 일(document_id NULL)이 빠질 수 있었다)
     .select(
       `
       *,
-      documents (title, uploaded_by),
-      documents!inner ( user_telegrams:uploaded_by (display_name) )
+      documents (title, uploaded_by, user_telegrams:uploaded_by (display_name))
     `
     )
     .eq("user_id", userId)

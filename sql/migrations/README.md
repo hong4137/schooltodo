@@ -12,8 +12,9 @@ Supabase(`schoolworks`, ref `sprrelvxxgvrdkmplidu`)에 적용한 SQL 모음.
 | `008_bot_conversations.sql` | 봇 v2 대화 기억(`bot_conversations`)·사용량(`bot_usage`) |
 | `009_upload_sessions_draft.sql` | 사진 초안: `upload_sessions.draft/hint/draft_message_id` 컬럼 |
 | `010_schedule_exceptions.sql` | 날짜별 시간표 예외(가족 공용): 그날만 쉼·시간 변경·일회성 |
+| `011_profiles_briefing_second_reminder.sql` | `profiles.briefing_enabled`(브리핑 대상), `pickup_second_reminder`(10분 전 2차 알림) |
 
-새 변경은 `011_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
+새 변경은 `012_` 부터 번호를 이어 붙이고, 대시보드 SQL Editor 에서 실행한 뒤 파일을 커밋한다.
 
 ## 기준선 다시 받기
 

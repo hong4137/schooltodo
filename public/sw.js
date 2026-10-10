@@ -1,6 +1,6 @@
 // SchoolToDo Service Worker - PWA + Push Notifications
 
-const CACHE_NAME = "schooltodo-v3";
+const CACHE_NAME = "schooltodo-__BUILD__"; // 빌드 때 scripts/stamp-sw.mjs 가 시각으로 바꾼다
 const STATIC_ASSETS = [
   "/schooltodo/",
   "/schooltodo/index.html",

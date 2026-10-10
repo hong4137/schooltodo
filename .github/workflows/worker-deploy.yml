@@ -1,0 +1,36 @@
+# worker/ 가 바뀌어 main 에 올라가면 Cloudflare 에 자동 배포한다.
+# 저장소 비밀 CLOUDFLARE_API_TOKEN (Workers Scripts:Edit 권한) 이 있어야 하고, 없으면 조용히 건너뛴다.
+#   토큰 만들기: Cloudflare 대시보드 → My Profile → API Tokens → "Edit Cloudflare Workers" 템플릿
+name: Deploy worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/**"
+      - ".github/workflows/worker-deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when no token
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "CLOUDFLARE_API_TOKEN 비밀이 없어 배포를 건너뜁니다. 로컬에서 npx wrangler deploy 하세요."
+      - uses: actions/setup-node@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+        if: env.CLOUDFLARE_API_TOKEN != ''
+      - run: npx wrangler deploy
+        if: env.CLOUDFLARE_API_TOKEN != ''

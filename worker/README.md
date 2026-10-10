@@ -30,7 +30,7 @@ npx wrangler deploy
 | 실행 기록·헬스체크 | `recordStatus()` `recordRun()` `buildHealthReport()` `GET /health` — `job_status`·`job_runs` |
 | 픽업·정각 알림 | `handlePickupReminder()` — `profiles.active_term` 과 다른 학기는 건너뜀 |
 | 웹푸시 | `sendWebPush()` `sendPushNotification()` `encryptPayload()` (VAPID 직접 구현, JWK import) |
-| 네스트 브리핑 | `runNestHubBriefing()` — `TARGET_USER_ID` 하드코딩, `GET /test-briefing` 으로 수동 실행 |
+| 네스트 브리핑 | `runNestHubBriefing()` `buildBriefing()` — 대상은 `profiles.briefing_enabled`, 할 일+일정+픽업+쉬는 날+예외. `GET /test-briefing?key=` 로 수동 실행 |
 
 ## 의존성
 

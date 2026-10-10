@@ -232,7 +232,7 @@ function CompletedSection({ tasks, ranges, onToggle, onUpdate }) {
         <span style={{ fontSize: 12, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
       </button>
       <div style={{
-        maxHeight: open ? completed.length * 120 : 0,
+        maxHeight: open ? 4000 : 0, // 카드 높이가 제각각이라 고정 배수로는 잘렸다
         opacity: open ? 1 : 0,
         overflow: "hidden",
         transition: "max-height 0.3s ease, opacity 0.2s ease",
