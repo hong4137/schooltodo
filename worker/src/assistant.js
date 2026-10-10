@@ -324,7 +324,7 @@ export async function handleAssistantText(env, { chatId, userTg, text }, deps) {
     await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, toTelegramHtml(reply));
 
     const stored = trimHistory([...history.messages, { role: "user", content: text }, { role: "assistant", content: reply }]);
-    await saveConversation(env, deps, chatId, userTg.user_id, stored, history.exists);
+    await saveConversation(env, deps, chatId, userTg.user_id, stored);
     await addUsage(env, deps, chatId, todayStr, usageTotals, usage);
   } catch (err) {
     console.error("assistant error:", err);
@@ -757,12 +757,17 @@ function resolveDayKey(day, today) {
 
 // ── 대화 저장 ─────────────────────────────────────────────────
 async function loadConversation(env, deps, chatId) {
-  const rows = await deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "bot_conversations", {
+  let rows = await deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "bot_conversations", {
     query: `?chat_id=eq.${chatId}&select=messages,updated_at`,
   });
   if (!Array.isArray(rows)) {
-    if (rows && rows.message) console.error("bot_conversations read error:", rows.message);
-    return { messages: [], exists: false };
+    console.error("bot_conversations read error:", rows && rows.message ? rows.message : rows);
+    // 한 번 더 시도. 그래도 안 되면 빈 기억으로 진행하되, 저장은 upsert 라 유실되지 않는다
+    const retry = await deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "bot_conversations", {
+      query: `?chat_id=eq.${chatId}&select=messages,updated_at`,
+    });
+    if (!Array.isArray(retry)) return { messages: [], exists: false };
+    rows = retry;
   }
   if (!rows[0]) return { messages: [], exists: false };
   const ageMin = (Date.now() - Date.parse(rows[0].updated_at)) / 60000;
@@ -777,12 +782,26 @@ function trimHistory(msgs) {
   return out;
 }
 
-async function saveConversation(env, deps, chatId, userId, messages, exists) {
-  const body = { chat_id: chatId, user_id: userId, messages, updated_at: new Date().toISOString() };
-  const r = await deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "bot_conversations", exists
-    ? { method: "PATCH", body, query: `?chat_id=eq.${chatId}` }
-    : { method: "POST", body });
-  if (r && !Array.isArray(r) && r.message) console.error("bot_conversations save error:", r.message);
+// 읽기가 잠깐 실패해도 저장이 유실되지 않게 항상 upsert (2026-10-11: INSERT 충돌로 턴이 사라져 맥락이 끊긴 적 있음)
+async function upsert(env, deps, table, conflictCols, body) {
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${table}?on_conflict=${conflictCols}`, {
+      method: "POST",
+      headers: { ...deps.supabaseHeaders(env.SUPABASE_SERVICE_ROLE_KEY), Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) console.error(`${table} upsert failed:`, res.status, (await res.text()).slice(0, 200));
+    return res.ok;
+  } catch (err) {
+    console.error(`${table} upsert error:`, err);
+    return false;
+  }
+}
+
+async function saveConversation(env, deps, chatId, userId, messages) {
+  await upsert(env, deps, "bot_conversations", "chat_id", {
+    chat_id: chatId, user_id: userId, messages, updated_at: new Date().toISOString(),
+  });
 }
 
 async function deleteConversation(env, deps, chatId) {
@@ -808,10 +827,7 @@ async function addUsage(env, deps, chatId, day, t, existing) {
     output_tokens: (existing ? existing.output_tokens : 0) + t.output,
     updated_at: new Date().toISOString(),
   };
-  const r = await deps.supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "bot_usage", existing
-    ? { method: "PATCH", body, query: `?chat_id=eq.${chatId}&day=eq.${day}` }
-    : { method: "POST", body });
-  if (r && !Array.isArray(r) && r.message) console.error("bot_usage save error:", r.message);
+  await upsert(env, deps, "bot_usage", "chat_id,day", body);
   console.log(`[Assistant] chat=${chatId} calls=${t.calls} in=${t.input} (cache ${t.cache_read}) out=${t.output}`);
 }
 
