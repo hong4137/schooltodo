@@ -15,13 +15,13 @@ SUPABASE_URL = "https://sprrelvxxgvrdkmplidu.supabase.co"
 #   BRIEFING_APPS_SCRIPT_URL  OPENAI_API_KEY  SUPABASE_SERVICE_ROLE_KEY
 #   TELEGRAM_BOT_TOKEN  VAPID_PRIVATE_KEY  VAPID_PUBLIC_KEY  VAPID_SUBJECT
 
-# Cron (UTC). 2026-10-10 대시보드 기준 그대로.
-#   30 22 * * *     KST 07:30 오늘 할 일 (텔레그램 + 웹푸시)
-#   10 22 * * *     KST 07:10 네스트 브리핑 (Apps Script → Google Tasks)
-#   0 12 * * *      KST 21:00 내일 할 일
-#   */10 2-9 * * *  KST 11:00~18:50 10분마다 픽업 1시간 전 · 정각 알림 (코드에서 평일·18시 미만만 처리)
+# Cron: 5분마다 한 번. 시각 판단은 코드(scheduled)에서 KST 로 한다.
+#   07:10            네스트 브리핑 (Apps Script → Google Tasks)
+#   사용자 설정 시각   아침 = 오늘 할 일, 저녁 = 내일 할 일 (profiles.notification_morning/evening, 기본 07:30 / 21:00)
+#   11:00~17:59 평일  픽업 1시간 전 · 정각 알림 (쉬는 날은 건너뜀)
+# 2026-10-10 이전엔 고정 Cron 4개(22:30/22:10/12:00 UTC + */10 2-9)였다.
 [triggers]
-crons = ["30 22 * * *", "10 22 * * *", "0 12 * * *", "*/10 2-9 * * *"]
+crons = ["*/5 * * * *"]
 
 [observability]
 enabled = true

@@ -98,8 +98,8 @@ export default function SettingsPage() {
     const { error } = await supabase
       .from("profiles")
       .update({
-        notification_morning: morning + ":00",
-        notification_evening: evening + ":00",
+        notification_morning: roundTo5(morning) + ":00",
+        notification_evening: roundTo5(evening) + ":00",
         pickup_reminder_enabled: pickupReminder,
       })
       .eq("id", user.id);
@@ -176,12 +176,18 @@ export default function SettingsPage() {
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border-light)" }}>
-          <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>아침 알림</span>
-          <input type="time" value={morning} onChange={(e) => setMorning(e.target.value)} style={timeInputStyle} />
+          <div>
+            <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>☀️ 아침 알림</span>
+            <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>오늘 할 일 · 5분 단위</div>
+          </div>
+          <input type="time" step={300} value={morning} onChange={(e) => setMorning(e.target.value)} style={timeInputStyle} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0" }}>
-          <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>저녁 알림</span>
-          <input type="time" value={evening} onChange={(e) => setEvening(e.target.value)} style={timeInputStyle} />
+          <div>
+            <span style={{ fontSize: 14, color: "var(--text-secondary)" }}>🌙 저녁 알림</span>
+            <div style={{ fontSize: 11, color: "var(--text-disabled)", marginTop: 2 }}>내일 할 일 · 자정 전으로</div>
+          </div>
+          <input type="time" step={300} value={evening} onChange={(e) => setEvening(e.target.value)} style={timeInputStyle} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderTop: "1px solid var(--border-light)" }}>
           <div>
@@ -222,6 +228,13 @@ export default function SettingsPage() {
       )}
     </div>
   );
+}
+
+// "07:33" → "07:30" (Worker 가 5분 간격으로 돈다)
+function roundTo5(t) {
+  const [h, m] = (t || "07:30").split(":").map(Number);
+  const mm = Math.floor((m || 0) / 5) * 5;
+  return `${String(h).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
 function Card({ title, children }) {

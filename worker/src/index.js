@@ -4,6 +4,11 @@
 const COMPLETE_KEYWORDS = ["완료", "끝", "분석", "다했어", "done"];
 const CANCEL_KEYWORDS = ["취소", "cancel"];
 
+// Cron 간격(분). wrangler.toml 의 "*/5 * * * *" 와 맞춘다.
+const CRON_STEP_MIN = 5;
+// 할 일 알림은 task 별 notified_* 플래그로 중복이 막히므로, 한 번 놓쳐도 30분 안에 다시 시도한다.
+const DIGEST_GRACE_MIN = 30;
+
 // ══════════════════════════════════════
 // Telegram API helpers
 // ══════════════════════════════════════
@@ -930,8 +935,8 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
       const pickupTotalMin = ph * 60 + pm;
       const reminderMin = pickupTotalMin - 60; // 1시간 전
 
-      // 현재 시각이 리마인드 시간의 ±5분 이내인지 체크 (10분 Cron이므로 여유)
-      if (nowTotalMin >= reminderMin && nowTotalMin < reminderMin + 10) {
+      // 현재 시각이 리마인드 슬롯 안인지 (Cron 간격만큼)
+      if (nowTotalMin >= reminderMin && nowTotalMin < reminderMin + CRON_STEP_MIN) {
         // Check if user has pickup reminder enabled
         const profile = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "profiles", {
           query: `?id=eq.${pickup.user_id}&select=pickup_reminder_enabled`,
@@ -981,8 +986,8 @@ async function handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, day
       const [ah, am] = alert.alert_time.split(":").map(Number);
       const alertTotalMin = ah * 60 + am;
 
-      // 정각 알림: 해당 시간의 ±5분 이내
-      if (nowTotalMin >= alertTotalMin && nowTotalMin < alertTotalMin + 10) {
+      // 정각 알림: 해당 슬롯 안
+      if (nowTotalMin >= alertTotalMin && nowTotalMin < alertTotalMin + CRON_STEP_MIN) {
         const alertTimeStr = `${String(ah).padStart(2, "0")}:${String(am).padStart(2, "0")}`;
         const emoji = alert.emoji || "🔔";
 
@@ -1388,130 +1393,144 @@ export default {
   },
 
   // ══════════════════════════════════════
-  // Cron: 알림 발송
-  // 아침(KST 07:30 = UTC 22:30 전날) → 오늘의 할 일
-  // 저녁(KST 21:00 = UTC 12:00) → 내일 할 일
+  // Cron: "*/5 * * * *" (5분마다). 모든 시각 판단은 KST.
+  //   07:10         네스트 브리핑 (고정)
+  //   사용자별 시각   아침 → 오늘 할 일 / 저녁 → 내일 할 일 (profiles.notification_morning/evening)
+  //   11:00~17:59 평일 픽업 1시간 전 · 정각 알림
   // ══════════════════════════════════════
   async scheduled(event, env, ctx) {
     const now = new Date();
     const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
     const kstHour = kst.getUTCHours();
     const kstMin = kst.getUTCMinutes();
-
-    // 아침 알림 (KST 07:00~08:00) → 오늘 할 일
-    // 저녁 알림 (KST 20:30~21:30) → 내일 할 일
-    const isMorning = kstHour >= 7 && kstHour < 8;
-    const isEvening = kstHour >= 20 && kstHour < 22;
-
-    // 픽업 리마인드 (KST 11:00~18:00, 월~금)
-    const isPickupWindow = kstHour >= 11 && kstHour < 18;
+    const nowTotalMin = kstHour * 60 + kstMin;
     const kstDayOfWeek = kst.getUTCDay(); // 0=sun, 1=mon...
     const isWeekday = kstDayOfWeek >= 1 && kstDayOfWeek <= 5;
+    const todayStr = getKSTDateString();
+    const tomorrowStr = addDaysStr(todayStr, 1);
 
     // ── 쉬는 날 (공휴일·재량휴업일·방학) ──
-    const todayStr = getKSTDateString();
     const daysOff = await getDaysOff(env, todayStr);
     if (daysOff.length > 0) {
       console.log(`[DaysOff] ${todayStr}: ${daysOff.map((r) => r.reason).join(", ")}`);
     }
 
-    // ── Nest Hub 브리핑 (KST 07:00~07:20) ──
-    // Cron "10 22 * * *" (UTC) = KST 07:10 에 실행됨.
+    // ── Nest Hub 브리핑 (KST 07:10 슬롯, 하루 한 번) ──
     // Google Home 루틴이 07:25에 "내 오늘 일정 알려줘"로 읽어감.
-    if (kstHour === 7 && kstMin < 20) {
+    if (inSlot(nowTotalMin, 7 * 60 + 10, CRON_STEP_MIN)) {
       ctx.waitUntil(runNestHubBriefing(env));
     }
 
-    // ── 픽업 리마인드 ──
-    if (isPickupWindow && isWeekday) {
+    // ── 픽업 리마인드 (KST 11:00~18:00, 월~금) ──
+    if (kstHour >= 11 && kstHour < 18 && isWeekday) {
       await handlePickupReminder(env, kst, kstHour, kstMin, kstDayOfWeek, daysOff);
     }
 
-    // ── 할 일 알림 ──
-    if (!isMorning && !isEvening) return;
+    // ── 할 일 알림: 사용자별 설정 시각 ──
+    const profiles = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "profiles", {
+      query: "?select=id,notification_morning,notification_evening",
+    });
+    if (!Array.isArray(profiles)) {
+      console.error("profiles query error:", profiles);
+      return;
+    }
 
-    const todayKST = new Date(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate());
-    const tomorrowKST = new Date(todayKST);
-    tomorrowKST.setDate(todayKST.getDate() + 1);
+    let tomorrowDaysOff = null;
+    for (const p of profiles) {
+      const morningMin = timeStrToMin(p.notification_morning) ?? 7 * 60 + 30;
+      const eveningMin = timeStrToMin(p.notification_evening) ?? 21 * 60;
 
-    const targetDate = isMorning
-      ? todayKST.toISOString().slice(0, 10)
-      : tomorrowKST.toISOString().slice(0, 10);
-
-    const label = isMorning ? "오늘" : "내일";
-    const emoji = isMorning ? "☀️" : "🌙";
-    const notifiedField = isMorning ? "notified_morning" : "notified_evening";
-    const targetDaysOff = isMorning ? daysOff : await getDaysOff(env, targetDate);
-
-    try {
-      const telegrams = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "user_telegrams", {
-        query: "?is_active=eq.true&select=*",
-      });
-
-      if (!telegrams || telegrams.length === 0) return;
-
-      const userMap = {};
-      for (const tg of telegrams) {
-        if (!userMap[tg.user_id]) userMap[tg.user_id] = [];
-        userMap[tg.user_id].push(tg);
+      if (inSlot(nowTotalMin, morningMin, DIGEST_GRACE_MIN)) {
+        await sendTaskDigest(env, p.id, "morning", todayStr, daysOff);
       }
-
-      for (const [userId, userTelegrams] of Object.entries(userMap)) {
-        const tasks = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "tasks", {
-          query: `?user_id=eq.${userId}&due_date=eq.${targetDate}&is_completed=eq.false&${notifiedField}=eq.false&order=due_time.asc.nullslast`,
-        });
-
-        if (!tasks || tasks.length === 0) continue;
-
-        let msg = `${emoji} <b>${label}의 할 일</b> (${tasks.length}개)\n\n`;
-        const off = dayOffFor(targetDaysOff, userId);
-        if (off) msg += `🏖 ${label}은 <b>${escapeHtml(off.reason)}</b>, 학교 안 가는 날이에요.\n\n`;
-        tasks.forEach((t, i) => {
-          const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-          const time = t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : "";
-          msg += `${i + 1}. ${pri} <b>${t.title}</b>${time}\n`;
-          if (t.description) {
-            const desc = t.description.length > 50 ? t.description.slice(0, 50) + "..." : t.description;
-            msg += `   ${desc}\n`;
-          }
-        });
-
-        if (isMorning) {
-          msg += "\n오늘도 화이팅! 💪";
-        } else {
-          msg += "\n미리 준비해두세요! 📝";
-        }
-
-        for (const tg of userTelegrams) {
-          await sendMessage(env.TELEGRAM_BOT_TOKEN, tg.chat_id, msg);
-        }
-
-        const pushTaskList = tasks.map((t) => {
-          const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
-          return `${pri} ${t.title}`;
-        }).join("\n");
-
-        await sendWebPush(env, userId, {
-          title: `${emoji} ${label}의 할 일 ${tasks.length}개`,
-          body: pushTaskList,
-          tag: `${label}-${targetDate}`,
-          url: "/schooltodo/",
-        });
-
-        const taskIds = tasks.map((t) => t.id);
-        for (const taskId of taskIds) {
-          await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "tasks", {
-            method: "PATCH",
-            body: { [notifiedField]: true },
-            query: `?id=eq.${taskId}`,
-          });
-        }
+      if (inSlot(nowTotalMin, eveningMin, DIGEST_GRACE_MIN)) {
+        if (!tomorrowDaysOff) tomorrowDaysOff = await getDaysOff(env, tomorrowStr);
+        await sendTaskDigest(env, p.id, "evening", tomorrowStr, tomorrowDaysOff);
       }
-    } catch (err) {
-      console.error("Notification error:", err);
     }
   },
 };
+
+// ── 시각 유틸 ──
+function inSlot(nowMin, targetMin, width) {
+  return nowMin >= targetMin && nowMin < targetMin + width;
+}
+
+// "07:30:00" | "07:30" → 450. 잘못된 값이면 null.
+function timeStrToMin(t) {
+  if (typeof t !== "string") return null;
+  const m = t.match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+
+function addDaysStr(dateStr, days) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + days));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+// ── 할 일 요약 알림 (아침=오늘, 저녁=내일). task 별 notified_* 플래그로 중복 방지 ──
+async function sendTaskDigest(env, userId, kind, targetDate, daysOffRows) {
+  const isMorning = kind === "morning";
+  const label = isMorning ? "오늘" : "내일";
+  const emoji = isMorning ? "☀️" : "🌙";
+  const notifiedField = isMorning ? "notified_morning" : "notified_evening";
+
+  try {
+    const tasks = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "tasks", {
+      query: `?user_id=eq.${userId}&due_date=eq.${targetDate}&is_completed=eq.false&${notifiedField}=eq.false&order=due_time.asc.nullslast`,
+    });
+    if (!Array.isArray(tasks) || tasks.length === 0) return;
+
+    let msg = `${emoji} <b>${label}의 할 일</b> (${tasks.length}개)\n\n`;
+    const off = dayOffFor(daysOffRows, userId);
+    if (off) msg += `🏖 ${label}은 <b>${escapeHtml(off.reason)}</b>, 학교 안 가는 날이에요.\n\n`;
+    tasks.forEach((t, i) => {
+      const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
+      const time = t.due_time ? ` ⏰${t.due_time.slice(0, 5)}` : "";
+      msg += `${i + 1}. ${pri} <b>${escapeHtml(t.title)}</b>${time}\n`;
+      if (t.description) {
+        const desc = t.description.length > 50 ? t.description.slice(0, 50) + "..." : t.description;
+        msg += `   ${escapeHtml(desc)}\n`;
+      }
+    });
+    msg += isMorning ? "\n오늘도 화이팅! 💪" : "\n미리 준비해두세요! 📝";
+
+    const telegrams = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "user_telegrams", {
+      query: `?user_id=eq.${userId}&is_active=eq.true&select=chat_id`,
+    });
+    if (Array.isArray(telegrams)) {
+      for (const tg of telegrams) {
+        await sendMessage(env.TELEGRAM_BOT_TOKEN, tg.chat_id, msg);
+      }
+    }
+
+    const pushTaskList = tasks.map((t) => {
+      const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
+      return `${pri} ${t.title}`;
+    }).join("\n");
+    await sendWebPush(env, userId, {
+      title: `${emoji} ${label}의 할 일 ${tasks.length}개`,
+      body: pushTaskList,
+      tag: `${label}-${targetDate}`,
+      url: "/schooltodo/",
+    });
+
+    for (const t of tasks) {
+      await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "tasks", {
+        method: "PATCH",
+        body: { [notifiedField]: true },
+        query: `?id=eq.${t.id}`,
+      });
+    }
+    console.log(`[Digest] ${kind} ${targetDate} user=${userId} tasks=${tasks.length}`);
+  } catch (err) {
+    console.error("Notification error:", err);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Nest Hub 브리핑 (BLOCK B)
