@@ -20,7 +20,8 @@ const TELEGRAM_MAX_LEN = 4000;
 const RESET_WORDS = ["처음부터", "대화 초기화", "새 대화", "/new"];
 
 // ── 도구 정의 ─────────────────────────────────────────────────
-const TOOLS = [
+// 주의: strict: true 는 API 상한이 20개. 넘으면 400 (2026-10-11 실제로 겪음). 단순 도구는 strict 없이.
+export const TOOLS = [
   {
     name: "list_tasks",
     description: "할 일 목록을 가져온다. 번호(n)는 사용자에게 보여줄 때 그대로 쓰고, 사용자가 '3번'이라고 하면 이 번호다.",
@@ -171,13 +172,11 @@ const TOOLS = [
   {
     name: "save_draft",
     description: "저장 대기 중인 초안을 할 일로 저장한다. 사용자가 '저장', '맞아', 'ㅇㅇ', '좋아' 등으로 확인했을 때.",
-    strict: true,
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
     name: "discard_draft",
     description: "저장 대기 중인 초안을 버린다. 사용자가 '취소', '버려', '아니야 저장하지 마' 라고 했을 때.",
-    strict: true,
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   // ── 시간표 편집 (말하는 사람 계정의 활성 학기) ──
@@ -254,7 +253,6 @@ const TOOLS = [
   {
     name: "list_terms",
     description: "학기 목록과 현재 활성 학기.",
-    strict: true,
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
