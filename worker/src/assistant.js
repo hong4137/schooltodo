@@ -20,12 +20,12 @@ const TELEGRAM_MAX_LEN = 4000;
 const RESET_WORDS = ["처음부터", "대화 초기화", "새 대화", "/new"];
 
 // ── 도구 정의 ─────────────────────────────────────────────────
-// 주의: strict: true 는 API 상한이 20개. 넘으면 400 (2026-10-11 실제로 겪음). 단순 도구는 strict 없이.
+// 주의: strict: true 는 상한 20개이고, 그 아래라도 합친 스키마가 크면 "compiled grammar is too large" 400 이 난다
+// (2026-10-11 둘 다 겪음). 중첩 배열이 있는 add_tasks·set_draft_tasks·add_exception 만 strict. 나머지는 코드에서 검증.
 export const TOOLS = [
   {
     name: "list_tasks",
     description: "할 일 목록을 가져온다. 번호(n)는 사용자에게 보여줄 때 그대로 쓰고, 사용자가 '3번'이라고 하면 이 번호다.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -85,7 +85,6 @@ export const TOOLS = [
   {
     name: "complete_task",
     description: "할 일을 완료(또는 완료 취소) 처리한다.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { id: { type: "string" }, done: { type: "boolean" } },
@@ -96,7 +95,6 @@ export const TOOLS = [
   {
     name: "delete_task",
     description: "할 일을 삭제한다. 되돌릴 수 없으니 사용자 확인을 받은 뒤에만 호출한다.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -107,7 +105,6 @@ export const TOOLS = [
   {
     name: "get_days_off",
     description: "쉬는 날(공휴일·재량휴업일·방학) 목록. from~to 기간과 겹치는 것.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { from: { type: "string", description: "YYYY-MM-DD" }, to: { type: "string", description: "YYYY-MM-DD" } },
@@ -118,7 +115,6 @@ export const TOOLS = [
   {
     name: "add_day_off",
     description: "쉬는 날을 등록한다. 그 기간엔 픽업·시간표 알림이 쉰다. 하루면 start=end.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -134,7 +130,6 @@ export const TOOLS = [
   {
     name: "delete_day_off",
     description: "쉬는 날 등록을 지운다. id 는 get_days_off 결과의 id.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -145,7 +140,6 @@ export const TOOLS = [
   {
     name: "get_timetable",
     description: "특정 요일의 시간표(수업·방과후·학원), 픽업 시각, 정각 알림(도보하원·이동). 활성 학기 기준.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { day: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri", "today", "tomorrow"] } },
@@ -183,7 +177,6 @@ export const TOOLS = [
   {
     name: "add_block",
     description: "매주 반복되는 시간표 수업을 추가한다 (정규·늘봄·방과후·학원). 그날만 하는 건 add_exception(kind=oneoff).",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -216,13 +209,11 @@ export const TOOLS = [
   {
     name: "delete_block",
     description: "시간표 수업을 영구 삭제한다 (매주 반복에서 빠짐). 사용자 확인 후에만. '이번 주만'이면 add_exception.",
-    strict: true,
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
   },
   {
     name: "set_pickups",
     description: "특정 요일의 픽업 시각을 통째로 바꾼다 (기존 것은 지워지고 이 목록으로). 비우려면 빈 배열.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { day: { type: "string", enum: ["mon", "tue", "wed", "thu", "fri"] }, times: { type: "array", items: { type: "string", description: "HH:MM" } } },
@@ -233,7 +224,6 @@ export const TOOLS = [
   {
     name: "add_alert",
     description: "정각 알림(도보하원, 이동 등)을 추가한다. 매주 반복.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: {
@@ -247,7 +237,6 @@ export const TOOLS = [
   {
     name: "delete_alert",
     description: "정각 알림을 삭제한다. id 는 get_timetable 의 alerts[].id.",
-    strict: true,
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
   },
   {
@@ -258,7 +247,6 @@ export const TOOLS = [
   {
     name: "set_active_term",
     description: "활성 학기를 바꾼다. 시간표·픽업·알림이 그 학기 것으로 전환된다. 없는 이름이면 새로 만든다.",
-    strict: true,
     input_schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false },
   },
   // ── 날짜별 예외 (가족 공용) ──
@@ -286,7 +274,6 @@ export const TOOLS = [
   {
     name: "list_exceptions",
     description: "기간 안의 시간표 예외 목록.",
-    strict: true,
     input_schema: {
       type: "object",
       properties: { from: { type: "string", description: "YYYY-MM-DD" }, to: { type: "string", description: "YYYY-MM-DD" } },
@@ -297,7 +284,6 @@ export const TOOLS = [
   {
     name: "delete_exception",
     description: "시간표 예외를 지운다 (원래 시간표로 돌아감). id 는 list_exceptions 결과의 id.",
-    strict: true,
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
   },
 ];
@@ -846,6 +832,10 @@ function describeError(err) {
   if (!err) return "";
   if (err instanceof Anthropic.AuthenticationError) return "(AI 키 설정을 확인해야 해요)";
   if (err instanceof Anthropic.RateLimitError) return "(AI 요청이 몰렸어요)";
-  if (err instanceof Anthropic.APIError) return `(AI 오류 ${err.status || ""})`;
+  if (err instanceof Anthropic.APIError) {
+    // 디버깅용으로 API 메시지 앞부분을 같이 보여준다 (비밀값 없음)
+    const m = (err.error && err.error.error && err.error.error.message) || err.message || "";
+    return `(AI 오류 ${err.status || ""}: ${String(m).replace(/\s+/g, " ").slice(0, 160)})`;
+  }
   return "";
 }
