@@ -1644,7 +1644,14 @@ async function buildHealthReport(env) {
   });
   const todayRuns = Array.isArray(runs) ? runs : [];
   const briefing = todayRuns.find((r) => r.job === "briefing");
-  if (kstMin >= 7 * 60 + 30 && !briefing) problems.push("오늘 네스트 브리핑이 실행되지 않음 (07:10 예정)");
+  // 기록이 오늘 07:10 이후에 시작됐으면(첫 배포 날) "브리핑 안 돌았다"고 할 수 없다
+  const oldest = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "job_runs", {
+    query: "?order=ran_at.asc&limit=1&select=ran_at",
+  });
+  const recordingSince = Array.isArray(oldest) && oldest[0] ? Date.parse(oldest[0].ran_at) : null;
+  const briefingDueMs = Date.parse(`${todayStr}T07:10:00+09:00`);
+  const canJudgeBriefing = recordingSince !== null && recordingSince < briefingDueMs;
+  if (kstMin >= 7 * 60 + 30 && !briefing && canJudgeBriefing) problems.push("오늘 네스트 브리핑이 실행되지 않음 (07:10 예정)");
   else if (briefing && !briefing.ok) problems.push(`오늘 네스트 브리핑 실패: ${JSON.stringify(briefing.detail)}`);
 
   return {
