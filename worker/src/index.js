@@ -4,7 +4,7 @@
 //                  ANTHROPIC_API_KEY 가 없으면 대화 기능은 안내만 하고, 슬래시 명령과 Cron 알림만 동작한다.
 import { handleAssistantText, recordUsage } from "./assistant.js";
 import { processSessionV2, handleDraftCallback } from "./draft.js";
-import { getExceptions, applyToBlocks, pickupException, alertException, describeException } from "./exceptions.js";
+import { getExceptions, pickupException, alertException, describeException } from "./exceptions.js";
 
 // assistant.js / draft.js 에 넘기는 공용 헬퍼 묶음
 function assistantDeps() {
@@ -1244,67 +1244,27 @@ async function notifyHealthProblems(env, report) {
 // ═══════════════════════════════════════════════════════════════
 
 // 브리핑 대상: profiles.briefing_enabled = true (011). 아직 없으면 예전 하드코딩 계정.
+// 브리핑 대상: profiles.briefing_enabled = true (011). 아직 없으면 예전 하드코딩 계정.
 const LEGACY_TARGET_USER_ID = "fdb9f068-d7b0-43c3-9736-94d37bd1bfe2";
-const BRIEFING_DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
-const BRIEFING_DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 
-// 2026-10-11(A5): 할 일만 읽던 것을 시간표(방과후·늘봄·학원)·정각 알림·픽업·쉬는 날·날짜별 예외·지난 할 일까지 담는다.
-// 할 일이 없는 날도 브리핑을 만들어 "오늘 할 일 없습니다"가 고장인지 정상인지 구분되게 한다.
+// 내용은 할 일만 (2026-10-12 사용자 결정: 시간표·픽업은 넣지 않는다).
+// 단, 할 일이 없는 날도 "오늘 할 일 없음"을 만들어 "브리핑이 안 왔다"와 구분되게 한다.
 async function runNestHubBriefing(env) {
   const todayKST = getKSTDateString();
   let userId = LEGACY_TARGET_USER_ID;
   try {
     const q = (path, opts) => supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, path, opts);
     const arr = (x) => (Array.isArray(x) ? x : []);
-    const hm = (t) => (t ? String(t).slice(0, 5) : null);
 
-    let term = null;
-    const prof = arr(await q("profiles", { query: "?briefing_enabled=eq.true&select=id,active_term&order=created_at.asc&limit=1" }));
-    if (prof[0]) { userId = prof[0].id; term = prof[0].active_term; }
-    else {
-      const p2 = arr(await q("profiles", { query: `?id=eq.${userId}&select=active_term` }));
-      term = p2[0] ? p2[0].active_term : null;
-    }
+    const prof = arr(await q("profiles", { query: "?briefing_enabled=eq.true&select=id&order=created_at.asc&limit=1" }));
+    if (prof[0]) userId = prof[0].id;
 
-    const dow = new Date(todayKST + "T00:00:00Z").getUTCDay();
-    const dayKey = BRIEFING_DAY_KEYS[dow];
-    const isWeekday = dow >= 1 && dow <= 5;
-    const termFilter = term ? `&term=eq.${encodeURIComponent(term)}` : "";
+    const tasks = arr(await q("tasks", {
+      query: `?user_id=eq.${userId}&due_date=eq.${todayKST}&is_completed=eq.false&select=id,title,priority,due_time&order=priority.desc,created_at.asc`,
+    }));
 
-    const [tasks, daysOff, exceptions, blocks, pickups, alerts, overdue] = await Promise.all([
-      q("tasks", { query: `?user_id=eq.${userId}&due_date=eq.${todayKST}&is_completed=eq.false&select=id,title,priority,due_time&order=priority.desc,created_at.asc` }),
-      getDaysOff(env, todayKST),
-      getExceptions(env, { supabaseQuery }, todayKST),
-      isWeekday ? q("timetable_blocks", { query: `?user_id=eq.${userId}&day=eq.${dayKey}${termFilter}&order=start_time.asc&select=name,start_time,end_time,category` }) : [],
-      isWeekday ? q("timetable_pickups", { query: `?user_id=eq.${userId}&day=eq.${dayKey}${termFilter}&order=pickup_time.asc&select=pickup_time` }) : [],
-      isWeekday ? q("timetable_alerts", { query: `?user_id=eq.${userId}&day=eq.${dayKey}&is_active=eq.true${termFilter}&order=alert_time.asc&select=name,alert_time` }) : [],
-      q("tasks", { query: `?user_id=eq.${userId}&due_date=lt.${todayKST}&is_completed=eq.false&order=due_date.asc&limit=3&select=title,due_date` }),
-    ]);
-
-    const off = dayOffFor(daysOff, userId);
-    // 정규 수업(오전 school 블록)·점심은 빼고 방과후·늘봄·학원만 읽어 준다
-    const rawBlocks = arr(blocks)
-      .map((b) => ({ name: b.name, start: hm(b.start_time), end: hm(b.end_time), category: b.category }))
-      .filter((b) => b.name !== "점심" && (b.category !== "school" || b.start >= "12:30"));
-    const todayBlocks = off ? [] : applyToBlocks(exceptions, rawBlocks).filter((b) => !b.skipped);
-    const todayPickups = off ? [] : arr(pickups).map((p) => hm(p.pickup_time)).map((t) => {
-      const ex = pickupException(exceptions, t);
-      return ex ? (ex.action === "skip" ? null : (ex.new_start || t)) : t;
-    }).filter(Boolean);
-    const todayAlerts = off ? [] : arr(alerts).map((a) => ({ name: a.name, time: hm(a.alert_time) })).map((a) => {
-      const ex = alertException(exceptions, a);
-      return ex ? (ex.action === "skip" ? null : { ...a, time: ex.new_start || a.time }) : a;
-    }).filter(Boolean);
-    const taskList = arr(tasks);
-    const overdueList = arr(overdue);
-
-    if (!off && taskList.length === 0 && todayBlocks.length === 0 && todayPickups.length === 0 && overdueList.length === 0) {
-      console.log(`[NestHub] ${todayKST}: nothing to brief, skipping`);
-      await recordRun(env, "briefing", userId, true, { date: todayKST, skipped: "nothing" });
-      return;
-    }
-
-    const { title, description } = buildBriefing({ todayKST, dow, off, tasks: taskList, blocks: todayBlocks, pickups: todayPickups, alerts: todayAlerts, exceptions, overdue: overdueList });
+    const title = buildBriefingTitle(tasks);
+    const description = buildBriefingDescription(tasks);
 
     if (!env.BRIEFING_APPS_SCRIPT_URL) {
       console.error("[NestHub] BRIEFING_APPS_SCRIPT_URL secret not set");
@@ -1322,14 +1282,14 @@ async function runNestHubBriefing(env) {
       const result = await res.json();
       if (result.success) {
         console.log(`[NestHub] ${todayKST}: "${title}" — task created`);
-        await recordRun(env, "briefing", userId, true, { date: todayKST, title, tasks: taskList.length, blocks: todayBlocks.length });
+        await recordRun(env, "briefing", userId, true, { date: todayKST, title, tasks: tasks.length });
       } else {
         console.error(`[NestHub] Apps Script error:`, result.error);
         await recordRun(env, "briefing", userId, false, { date: todayKST, error: String(result.error).slice(0, 200) });
       }
     } catch (e) {
       console.log(`[NestHub] ${todayKST}: "${title}" — POST sent (response not JSON, likely OK)`);
-      await recordRun(env, "briefing", userId, true, { date: todayKST, title, tasks: taskList.length, blocks: todayBlocks.length, note: "non-json response" });
+      await recordRun(env, "briefing", userId, true, { date: todayKST, title, tasks: tasks.length, note: "non-json response" });
     }
   } catch (err) {
     console.error("[NestHub] briefing error:", err);
@@ -1337,51 +1297,21 @@ async function runNestHubBriefing(env) {
   }
 }
 
-// "15:20" → "15시 20분" (네스트가 읽기 좋게)
-function speakTime(t) {
-  if (!t) return "";
-  const h = parseInt(t.slice(0, 2), 10), m = parseInt(t.slice(3, 5), 10);
-  return m === 0 ? `${h}시` : `${h}시 ${m}분`;
+function buildBriefingTitle(tasks) {
+  if (tasks.length === 0) return "오늘 할 일 없음";
+  const titles = tasks.map((t) => t.title);
+  if (titles.length <= 3) return `오늘 할 일: ${titles.join(", ")}`;
+  return `오늘 할 일: ${titles.slice(0, 3).join(", ")} 외 ${titles.length - 3}건`;
 }
 
-function buildBriefing({ todayKST, dow, off, tasks, blocks, pickups, alerts, exceptions, overdue }) {
-  const pri = (t) => (t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢");
-  const titles = tasks.map((t) => t.title);
-
-  // 제목: 네스트가 주로 읽는 부분. 짧고 말이 되게.
-  let title;
-  if (off) {
-    title = `오늘은 ${off.reason}, 학교 안 가는 날` + (tasks.length ? ` · 할 일 ${tasks.length}개` : "");
-  } else if (tasks.length) {
-    title = tasks.length <= 3 ? `오늘 할 일: ${titles.join(", ")}` : `오늘 할 일: ${titles.slice(0, 3).join(", ")} 외 ${tasks.length - 3}건`;
-    if (pickups.length) title += ` · 픽업 ${speakTime(pickups[pickups.length - 1])}`;
-  } else if (blocks.length) {
-    title = `오늘 일정: ${blocks.slice(0, 3).map((b) => `${b.name} ${speakTime(b.start)}`).join(", ")}` + (blocks.length > 3 ? ` 외 ${blocks.length - 3}개` : "");
-    if (pickups.length) title += ` · 픽업 ${speakTime(pickups[pickups.length - 1])}`;
-  } else {
-    title = "오늘 할 일 없음" + (pickups.length ? ` · 픽업 ${speakTime(pickups[pickups.length - 1])}` : "");
-  }
-  if (title.length > 120) title = title.slice(0, 117) + "…";
-
-  const [, m, d] = todayKST.split("-").map(Number);
-  const lines = [`${m}월 ${d}일 ${BRIEFING_DAY_NAMES[dow]}요일`];
-  if (off) lines.push(`🏖 ${off.reason} — 픽업·시간표 알림 쉼`);
-  if (tasks.length) {
-    lines.push("", "할 일:");
-    tasks.forEach((t, i) => lines.push(`${i + 1}. ${pri(t)} ${t.title}${t.due_time ? ` (${t.due_time.slice(0, 5)})` : ""}`));
-  }
-  if (overdue.length) {
-    lines.push("", "지난 할 일:");
-    overdue.forEach((t) => lines.push(`• ${t.title} (${t.due_date.slice(5).replace("-", "/")})`));
-  }
-  if (blocks.length) {
-    lines.push("", "오늘 일정:");
-    blocks.forEach((b) => lines.push(`• ${b.name} ${b.start}~${b.end}${b.exception ? " (변경)" : ""}`));
-  }
-  if (alerts.length) alerts.forEach((a) => lines.push(`• ${a.name} ${a.time}`));
-  if (pickups.length) lines.push(`• 픽업 ${pickups.join(", ")}`);
-  if (exceptions.length) lines.push("", "시간표 변경: " + exceptions.map(describeException).join(", "));
-  return { title, description: lines.join("\n") };
+function buildBriefingDescription(tasks) {
+  if (tasks.length === 0) return "오늘 마감인 할 일이 없어요.";
+  const lines = tasks.map((t, i) => {
+    const pri = t.priority === "high" ? "🔴" : t.priority === "medium" ? "🟡" : "🟢";
+    const time = t.due_time ? ` (${t.due_time.slice(0, 5)})` : "";
+    return `${i + 1}. ${pri} ${t.title}${time}`;
+  });
+  return "오늘의 SchoolToDo 할 일:\n\n" + lines.join("\n");
 }
 
 function getKSTDateString() {
