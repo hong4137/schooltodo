@@ -1,8 +1,9 @@
 // ═══════════════════════════════════════════════════════════════
 // 봇 v2-2 — 알림장 사진 → 초안(draft) → 확인·수정 → 저장
-//   사진은 index.js 가 upload_sessions 에 모은다. "완료"(또는 사진과 함께 온 말)에 processSessionV2 가
+//   사진은 index.js·collect.js 가 upload_sessions 에 모으고, 조용해지면(또는 "다 보냈어") processSessionV2 가
 //   Claude Vision 으로 초안을 뽑아 upload_sessions.draft 에 두고, 번호 목록 + [✅ 저장][❌ 취소] 버튼을 보낸다.
 //   고치는 말("2번은 금요일로")은 assistant.js 가 set_draft_tasks 도구로 처리하고, 저장은 saveDraft().
+//   초안을 보여 준 뒤 사진이 더 오면(30분 안) 같은 문서인지 보고, 같으면 앞 초안에 합친다 — 고친 내용은 그대로 둔다.
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
 import { notifyFamily } from "./family.js";
@@ -109,14 +110,35 @@ function arrayBufferToBase64(buf) {
   return btoa(binary);
 }
 
-export async function analyzePhotos(env, deps, { images, hint, todayStr }) {
+// 앞 초안이 있을 때만 쓰는 도구 — '이어지는 사진인가'를 함께 답한다
+const SUBMIT_DRAFT_TOOL_WITH_PRIOR = {
+  ...SUBMIT_DRAFT_TOOL,
+  input_schema: {
+    ...SUBMIT_DRAFT_TOOL.input_schema,
+    properties: {
+      ...SUBMIT_DRAFT_TOOL.input_schema.properties,
+      continues_previous: { type: "boolean", description: "이번 사진이 앞서 받은 알림장의 이어지는 쪽(뒷면·다음 장·같은 안내의 첨부)이면 true, 다른 문서면 false" },
+    },
+    required: [...SUBMIT_DRAFT_TOOL.input_schema.required, "continues_previous"],
+  },
+};
+
+function priorNote(prior) {
+  const tasks = (prior.tasks || []).map((t, i) => `${i + 1}. ${t.title} | ${t.due_date}${t.due_time ? " " + t.due_time : ""}`).join("\n") || "(없음)";
+  const changes = (prior.schedule_changes || []).map((c) => describeChange(c)).join("\n") || "(없음)";
+  return `\n\n[앞서 받은 알림장 초안] 제목: ${prior.document_title || ""}\n요약: ${prior.summary || ""}\n할 일:\n${tasks}\n시간표 변경:\n${changes}\n` +
+    "이번 사진이 위 알림장의 이어지는 쪽이면 continues_previous=true 로 하고, 위에 이미 있는 할 일·시간표 변경은 다시 넣지 말고 새로 나온 것만 넣는다. " +
+    "다른 문서면 continues_previous=false 로 하고 평소처럼 전부 뽑는다.";
+}
+
+export async function analyzePhotos(env, deps, { images, hint, todayStr, prior = null }) {
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 2, timeout: 120_000 });
   const content = images.map((im) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: im.base64 } }));
   content.push({
     type: "text",
-    text: hint
+    text: (hint
       ? `이 사진에서 학부모가 해야 할 일을 뽑아 submit_draft 로 제출해줘.\n사용자가 사진과 함께 한 말: "${hint}"`
-      : "이 사진에서 학부모가 해야 할 일을 뽑아 submit_draft 로 제출해줘.",
+      : "이 사진에서 학부모가 해야 할 일을 뽑아 submit_draft 로 제출해줘.") + (prior ? priorNote(prior) : ""),
   });
   const messages = [{ role: "user", content }];
   let usage = { input: 0, output: 0, cache_read: 0, calls: 0 };
@@ -129,7 +151,7 @@ export async function analyzePhotos(env, deps, { images, hint, todayStr }) {
       fallbacks: "default",
       output_config: { effort: "medium" },
       system: [{ type: "text", text: visionSystemPrompt(todayStr), cache_control: { type: "ephemeral" } }],
-      tools: [SUBMIT_DRAFT_TOOL],
+      tools: [prior ? SUBMIT_DRAFT_TOOL_WITH_PRIOR : SUBMIT_DRAFT_TOOL],
       messages,
     });
     usage.calls += 1;
@@ -150,6 +172,7 @@ export async function analyzePhotos(env, deps, { images, hint, todayStr }) {
           schedule_changes: (d.schedule_changes || []).map(normalizeChange).filter(Boolean),
           key_facts: Array.isArray(d.key_facts) ? d.key_facts.map((s) => String(s).slice(0, 120)).slice(0, 12) : [],
           unclear: Array.isArray(d.unclear) ? d.unclear.slice(0, 5) : [],
+          continues_previous: prior ? d.continues_previous === true : false,
         },
         usage,
       };
@@ -280,9 +303,16 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
       return;
     }
 
-    const { draft, usage } = await analyzePhotos(env, deps, { images, hint, todayStr });
-    console.log(`[Draft] chat=${chatId} photos=${images.length} tasks=${draft.tasks.length} in=${usage.input} out=${usage.output}`);
+    const prior = await findMergeTarget(env, deps, chatId, session.id);
+    const { draft, usage } = await analyzePhotos(env, deps, { images, hint, todayStr, prior: prior ? prior.draft : null });
+    console.log(`[Draft] chat=${chatId} photos=${images.length} tasks=${draft.tasks.length} prior=${prior ? prior.id : "-"} continues=${draft.continues_previous} in=${usage.input} out=${usage.output}`);
     if (deps.addUsage) await deps.addUsage(env, chatId, todayStr, usage);
+
+    if (prior && draft.continues_previous) {
+      await mergeIntoPrior(env, deps, { chatId, prior, session, draft, esc });
+      return;
+    }
+    delete draft.continues_previous;
 
     if (draft.tasks.length === 0 && draft.schedule_changes.length === 0) {
       // 할 일은 없지만 사진 맥락(key_facts)은 초안으로 남겨 둔다 → "그거라도 넣어줘" 가 이어진다
@@ -311,6 +341,42 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
     await deps.sendMessage(token, chatId, `❌ 분석 중 오류가 났어요. <code>${esc(String((err && err.message) || err).slice(0, 150))}</code>\n다시 시도해 주세요.`);
     await patchSession(env, deps, session.id, { status: "completed" });
   }
+}
+
+// 30분 안에 보여 준, 아직 저장 안 한 초안 — 늦게 온 사진을 합칠 후보
+async function findMergeTarget(env, deps, chatId, exceptId) {
+  const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const rows = await q(env, deps, "upload_sessions", {
+    query: `?chat_id=eq.${chatId}&status=eq.draft&id=neq.${exceptId}&updated_at=gte.${since}&order=updated_at.desc&limit=1`,
+  });
+  return Array.isArray(rows) && rows[0] && rows[0].draft ? rows[0] : null;
+}
+
+// 늦게 온 사진의 결과를 앞 초안 뒤에 붙인다. 사용자가 앞 초안에서 고친 내용은 그대로 둔다.
+async function mergeIntoPrior(env, deps, { chatId, prior, session, draft, esc }) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const pd = prior.draft;
+  const merged = {
+    ...pd,
+    document_title: (!pd.document_title || pd.document_title === "알림장") ? draft.document_title : pd.document_title,
+    summary: [pd.summary, draft.summary].filter(Boolean).join(" ").slice(0, 400),
+    tasks: [...(pd.tasks || []), ...draft.tasks],
+    schedule_changes: [...(pd.schedule_changes || []), ...draft.schedule_changes],
+    key_facts: [...(pd.key_facts || []), ...draft.key_facts].slice(0, 20),
+    unclear: [...(pd.unclear || []), ...draft.unclear].slice(0, 6),
+  };
+  delete merged.continues_previous;
+  const ids = [...(prior.photo_file_ids || []), ...(session.photo_file_ids || [])];
+  const added = draft.tasks.length + draft.schedule_changes.length;
+
+  if (prior.draft_message_id) await deps.tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: prior.draft_message_id });
+  const head = `📎 앞 알림장에 이어지는 사진이라 합쳤어요 (사진 ${ids.length}장, ${added ? `새로 ${added}건` : "새 항목 없음"})\n\n`;
+  const sent = await deps.tg(token, "sendMessage", {
+    chat_id: chatId, text: head + renderDraft(merged, esc), parse_mode: "HTML", reply_markup: draftKeyboard(prior.id),
+  });
+  const messageId = sent && sent.result ? sent.result.message_id : prior.draft_message_id;
+  await patchSession(env, deps, prior.id, { draft: merged, photo_file_ids: ids, photo_count: ids.length, draft_message_id: messageId });
+  await patchSession(env, deps, session.id, { status: "completed" });
 }
 
 // 초안 목록 교체 (assistant 의 set_draft_tasks 가 호출)

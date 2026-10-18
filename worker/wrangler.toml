@@ -22,6 +22,12 @@ SUPABASE_URL = "https://sprrelvxxgvrdkmplidu.supabase.co"
 #   사용자 설정 시각   아침 = 오늘 할 일, 저녁 = 내일 할 일 (profiles.notification_morning/evening, 기본 07:30 / 21:00)
 #   11:00~17:59 평일  픽업 1시간 전 · 정각 알림 (쉬는 날은 건너뜀)
 # 2026-10-10 이전엔 고정 Cron 4개(22:30/22:10/12:00 UTC + */10 2-9)였다.
+# 사진이 조용해지면 자기 자신에게 새 요청을 띄워 분석한다 (src/collect.js).
+# 기다린 12초가 분석 시간을 깎지 않게 하려는 것. 바인딩이 없으면 같은 요청 안에서 분석한다.
+[[services]]
+binding = "SELF"
+service = "schooltodo-bot"
+
 [triggers]
 crons = ["*/5 * * * *"]
 

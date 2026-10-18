@@ -2,8 +2,10 @@
 // 변경: base64 대신 URL 방식으로 이미지 전달, 에러 디버깅 강화
 // 2026-10-11 v2-4: 텍스트는 assistant.js(Claude), 사진은 draft.js. OpenAI 기반 v1 코드는 제거됨.
 //                  ANTHROPIC_API_KEY 가 없으면 대화 기능은 안내만 하고, 슬래시 명령과 Cron 알림만 동작한다.
+// 2026-10-18 v2-5: 사진 뒤에 "완료"를 말하지 않아도 된다 — 조용해지면 알아서 분석, 중간에 온 말은 collect.js 가 뜻을 고른다.
 import { handleAssistantText, recordUsage } from "./assistant.js";
-import { processSessionV2, handleDraftCallback } from "./draft.js";
+import { handleDraftCallback } from "./draft.js";
+import { touchSession, armQuietTimer, handleCollectText, handleInternal, sweepStaleSessions } from "./collect.js";
 import { getExceptions, pickupException, alertException, describeException } from "./exceptions.js";
 
 // assistant.js / draft.js 에 넘기는 공용 헬퍼 묶음
@@ -14,8 +16,6 @@ function assistantDeps() {
   };
 }
 
-const COMPLETE_KEYWORDS = ["완료", "끝", "분석", "다했어", "done"];
-const CANCEL_KEYWORDS = ["취소", "cancel"];
 
 // Cron 간격(분). wrangler.toml 의 "*/5 * * * *" 와 맞춘다.
 const CRON_STEP_MIN = 5;
@@ -214,10 +214,13 @@ async function getActiveSession(env, chatId) {
 }
 
 async function createSession(env, chatId, userId, telegramId) {
+  // 오래 방치된 모음만 정리한다. 앨범 사진이 동시에 와서 세션이 둘 생겨도 서로 지우지 않게 2분 안의 것은 남긴다
+  // (둘로 갈린 모음은 분석 때 '앞 초안에 이어지는 사진'으로 합쳐진다).
+  const staleBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
   await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "upload_sessions", {
     method: "PATCH",
     body: { status: "expired" },
-    query: `?chat_id=eq.${chatId}&status=eq.active`,
+    query: `?chat_id=eq.${chatId}&status=eq.active&last_photo_at=lt.${staleBefore}`,
   });
 
   const data = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "upload_sessions", {
@@ -235,18 +238,15 @@ async function createSession(env, chatId, userId, telegramId) {
   return data && data.length > 0 ? data[0] : null;
 }
 
-async function addPhotoToSession(env, sessionId, fileId, currentIds, currentCount) {
-  const newIds = [...currentIds, fileId];
-  await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "upload_sessions", {
-    method: "PATCH",
-    body: {
-      photo_file_ids: newIds,
-      photo_count: currentCount + 1,
-      last_photo_at: new Date().toISOString(),
-    },
-    query: `?id=eq.${sessionId}`,
+// 사진을 세션에 붙이고, 그 시각(= 이 사진의 타이머 표식)을 돌려준다
+async function addPhotoToSession(env, sessionId, fileId) {
+  // 앨범은 여러 장이 거의 동시에 온다 — 방금 읽은 목록에 덧붙이면 서로 덮어쓰므로 붙이기 직전에 다시 읽는다
+  const rows = await supabaseQuery(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, "upload_sessions", {
+    query: `?id=eq.${sessionId}&select=photo_file_ids`,
   });
-  return newIds;
+  const cur = Array.isArray(rows) && rows[0] && Array.isArray(rows[0].photo_file_ids) ? rows[0].photo_file_ids : [];
+  const newIds = cur.includes(fileId) ? cur : [...cur, fileId];
+  return touchSession(env, assistantDeps(), sessionId, { photo_file_ids: newIds, photo_count: newIds.length });
 }
 
 async function markSessionCompleted(env, sessionId) {
@@ -260,7 +260,7 @@ async function markSessionCompleted(env, sessionId) {
 // ══════════════════════════════════════
 // Photo upload handling
 // ══════════════════════════════════════
-async function handlePhoto(env, chatId, photoFileId, from) {
+async function handlePhoto(env, ctx, chatId, photoFileId, from) {
   const userTg = await findUserByChatId(env, chatId);
   if (!userTg) {
     await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "❌ 먼저 /link로 계정을 연동해주세요.");
@@ -274,17 +274,15 @@ async function handlePhoto(env, chatId, photoFileId, from) {
     await sendMessage(
       env.TELEGRAM_BOT_TOKEN,
       chatId,
-      "📸 사진을 받았어요! (1장)\n\n" +
-        "여러 장이면 계속 보내세요.\n" +
-        '<b>"완료"</b>를 입력하면 분석을 시작해요.\n' +
+      "📸 사진 받았어요.\n" +
+        "더 있으면 이어서 보내 주세요. 다 받으면 제가 알아서 읽을게요.\n" +
         '설명을 덧붙여도 돼요. (예: "이거 다음 주 거야")'
     );
-  } else {
-    const newCount = session.photo_count + 1;
-    await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, `📸 사진 추가! (${newCount}장)`);
   }
+  // 두 번째 장부터는 따로 답하지 않는다 (앨범이면 알림이 줄줄이 온다). 조용해지면 "🔍 N장 분석 중"이 간다.
 
-  await addPhotoToSession(env, session.id, photoFileId, session.photo_file_ids || [], session.photo_count || 0);
+  const stamp = await addPhotoToSession(env, session.id, photoFileId);
+  armQuietTimer(env, assistantDeps(), ctx, { sessionId: session.id, stamp, esc: escapeHtml, findUser: findUserByChatId });
 }
 // ══════════════════════════════════════
 // Command: /list - 전체 할 일 목록
@@ -394,6 +392,7 @@ async function handleReset(env, chatId, confirmed) {
 async function handleHelp(env, chatId) {
   const msg = `📖 <b>사용법</b>\n\n` +
     `📸 <b>사진 보내기</b> → 알림장을 읽어 초안을 보여주고, 확인 후 저장\n` +
+    `   여러 장이면 이어서 보내면 돼요. 다 받으면 알아서 읽어요\n` +
     `   사진 뒤에 "이거 다음 주 거야" 처럼 말을 붙여도 돼요\n\n` +
     `💬 <b>그냥 말하면 돼요</b>\n` +
     `• "이번 주 준비물 뭐 있어?", "내일 뭐 해야 돼?"\n` +
@@ -790,6 +789,13 @@ export default {
     try {
       const update = await request.json();
 
+      // 내부 요청: 사진이 조용해졌으니 분석하라 (collect.js 가 SELF 바인딩으로 보낸다)
+      if (update.internal) {
+        ctx.waitUntil(handleInternal(env, assistantDeps(), ctx, update.internal, { esc: escapeHtml, findUser: findUserByChatId })
+          .catch((err) => console.error("internal error:", err)));
+        return new Response("OK");
+      }
+
       // 인라인 버튼 (초안 ✅ 저장 / ❌ 취소)
       if (update.callback_query) {
         ctx.waitUntil(handleDraftCallback(env, assistantDeps(), update.callback_query, escapeHtml));
@@ -858,36 +864,28 @@ export default {
         // Photo
         if (msg.photo && msg.photo.length > 0) {
           const photo = msg.photo[msg.photo.length - 1];
-          await handlePhoto(env, chatId, photo.file_id, from);
+          await handlePhoto(env, ctx, chatId, photo.file_id, from);
           return new Response("OK");
         }
 
-        // "완료"/"취소" 키워드는 사진 세션이 있을 때만 가로챈다. (전엔 세션이 없어도 "숙제 끝" 같은 말을 조용히 삼켰다)
-        const lowerText = text.toLowerCase();
-        const kwSession = text ? await getActiveSession(env, chatId) : null;
-        if (kwSession && COMPLETE_KEYWORDS.some((kw) => lowerText.includes(kw))) {
-          if (kwSession.photo_count > 0) {
-            // 분석은 뒤에서. 바로 200 을 돌려줘야 Telegram 이 같은 메시지를 재전송하지 않는다.
+        // 사진을 모으는 중에 온 말 — 설명인지, 다 보냈다는 건지, 취소인지, 다른 부탁인지는 collect.js 가 고른다.
+        // 판단·분석은 뒤에서. 바로 200 을 돌려줘야 Telegram 이 같은 메시지를 재전송하지 않는다.
+        const collecting = text && !text.startsWith("/") ? await getActiveSession(env, chatId) : null;
+        if (collecting && collecting.photo_count > 0) {
+          ctx.waitUntil((async () => {
+            const deps = assistantDeps();
+            const handled = await handleCollectText(env, deps, ctx, { session: collecting, text, esc: escapeHtml, findUser: findUserByChatId });
+            if (handled) return;
+            // 사진과 상관없는 부탁 → 평소 대화로. 사진은 계속 기다리다 조용해지면 읽는다.
             const userTg = await findUserByChatId(env, chatId);
-            ctx.waitUntil(processSessionV2(env, assistantDeps(), { chatId, userTg, session: kwSession, hint: null, esc: escapeHtml }));
-          }
-          return new Response("OK");
-        }
-        if (kwSession && CANCEL_KEYWORDS.some((kw) => lowerText.includes(kw))) {
-          await markSessionCompleted(env, kwSession.id);
-          await sendMessage(env.TELEGRAM_BOT_TOKEN, chatId, "🗑️ 업로드가 취소되었어요.");
-          return new Response("OK");
-        }
-        // v2: 사진을 모으는 중에 온 다른 말은 "설명"으로 삼아 바로 분석한다 ("이거 내일까지야")
-        if (kwSession && kwSession.photo_count > 0 && text && !text.startsWith("/")) {
-          const userTg = await findUserByChatId(env, chatId);
-          ctx.waitUntil(processSessionV2(env, assistantDeps(), { chatId, userTg, session: kwSession, hint: text, esc: escapeHtml }));
+            if (userTg && env.ANTHROPIC_API_KEY) await handleAssistantText(env, { chatId, userTg, text }, deps);
+          })().catch((err) => console.error("collect text error:", err)));
           return new Response("OK");
         }
 
         // Text-based input (no active photo session, not a command)
         if (text && !text.startsWith("/")) {
-          const session = await getActiveSession(env, chatId);
+          const session = collecting;
           if (!session) {
             const userTg = await findUserByChatId(env, chatId);
             if (!userTg) {
@@ -906,7 +904,6 @@ export default {
           return new Response("OK");
         }
 
-        // Auto-process removed - "완료" input required
       }
 
       return new Response("OK");
@@ -986,6 +983,10 @@ async function runScheduled(env, ctx) {
         digests += await sendTaskDigest(env, p.id, "evening", tomorrowStr, tomorrowDaysOff);
       }
     }
+
+    // ── 사진 모으기 안전망: 조용해졌는데 분석이 안 뜬 세션 ──
+    const swept = await sweepStaleSessions(env, assistantDeps(), ctx, { esc: escapeHtml, findUser: findUserByChatId });
+    if (swept) console.log(`[Collect] cron picked up ${swept} idle session(s)`);
 
     // ── 하루 한 번 (KST 03:00) 30일 지난 실행 기록 정리 ──
     if (inSlot(nowTotalMin, 3 * 60, CRON_STEP_MIN)) {
@@ -1140,7 +1141,9 @@ function isAdminRequest(env, url) {
 
 // Telegram 에 webhook 주소와 비밀 토큰을 등록한다. 결과로 getWebhookInfo 를 돌려준다.
 async function setupTelegramWebhook(env, origin) {
-  const body = { url: `${origin}/`, allowed_updates: ["message", "callback_query"], drop_pending_updates: false };
+  // max_connections 1: 앨범 사진이 동시에 들어와 사진 목록을 서로 덮어쓰지 않게 한 번에 하나씩 받는다.
+  // (사진 처리는 DB 에 붙이고 바로 200 — 무거운 일은 waitUntil 이라 줄이 길어지지 않는다)
+  const body = { url: `${origin}/`, allowed_updates: ["message", "callback_query"], drop_pending_updates: false, max_connections: 1 };
   if (env.TELEGRAM_WEBHOOK_SECRET) body.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
   const set = await tg(env.TELEGRAM_BOT_TOKEN, "setWebhook", body);
   const info = await tg(env.TELEGRAM_BOT_TOKEN, "getWebhookInfo", {});
