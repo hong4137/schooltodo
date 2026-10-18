@@ -5,7 +5,7 @@
 // 2026-10-18 v2-5: 사진 뒤에 "완료"를 말하지 않아도 된다 — 조용해지면 알아서 분석, 중간에 온 말은 collect.js 가 뜻을 고른다.
 import { handleAssistantText, recordUsage } from "./assistant.js";
 import { handleDraftCallback } from "./draft.js";
-import { touchSession, armQuietTimer, handleCollectText, handleInternal, sweepStaleSessions } from "./collect.js";
+import { touchSession, armQuietTimer, handleCollectText, handleMergeAnswer, handleInternal, sweepStaleSessions } from "./collect.js";
 import { getExceptions, pickupException, alertException, describeException } from "./exceptions.js";
 
 // assistant.js / draft.js 에 넘기는 공용 헬퍼 묶음
@@ -894,8 +894,13 @@ export default {
             }
 
             // v2: Claude 대화형 비서. 응답은 바로 200 으로 돌려주고 뒤에서 처리 (Telegram 재전송 방지)
+            //     '앞 초안에 합칠까요?'를 물어 둔 게 있으면 그 답인지 먼저 본다
             if (env.ANTHROPIC_API_KEY) {
-              ctx.waitUntil(handleAssistantText(env, { chatId, userTg, text }, assistantDeps()));
+              ctx.waitUntil((async () => {
+                const deps = assistantDeps();
+                if (await handleMergeAnswer(env, deps, { chatId, text, esc: escapeHtml })) return;
+                await handleAssistantText(env, { chatId, userTg, text }, deps);
+              })().catch((err) => console.error("text route error:", err)));
               return new Response("OK");
             }
 
@@ -983,6 +988,9 @@ async function runScheduled(env, ctx) {
         digests += await sendTaskDigest(env, p.id, "evening", tomorrowStr, tomorrowDaysOff);
       }
     }
+
+    // ── 매시 정각 슬롯: 텔레그램 웹훅 설정이 코드와 다르면 스스로 다시 등록 (max_connections 1 등) ──
+    if (kstMin < CRON_STEP_MIN) ctx.waitUntil(ensureWebhookConfig(env).catch((err) => console.error("webhook check error:", err)));
 
     // ── 사진 모으기 안전망: 조용해졌는데 분석이 안 뜬 세션 ──
     const swept = await sweepStaleSessions(env, assistantDeps(), ctx, { esc: escapeHtml, findUser: findUserByChatId });
@@ -1140,6 +1148,17 @@ function isAdminRequest(env, url) {
 }
 
 // Telegram 에 webhook 주소와 비밀 토큰을 등록한다. 결과로 getWebhookInfo 를 돌려준다.
+// 지금 등록된 웹훅이 코드가 원하는 설정과 다르면 같은 주소로 다시 등록한다 (관리 키 없이도 바뀐 설정이 적용되게)
+async function ensureWebhookConfig(env) {
+  const info = await tg(env.TELEGRAM_BOT_TOKEN, "getWebhookInfo", {});
+  const r = info && info.result ? info.result : null;
+  if (!r || !r.url) return;
+  if (r.max_connections === 1) return;
+  const origin = new URL(r.url).origin;
+  const res = await setupTelegramWebhook(env, origin);
+  console.log(`[Webhook] re-registered (max_connections ${r.max_connections} → 1): ${res.ok ? "ok" : res.set_result}`);
+}
+
 async function setupTelegramWebhook(env, origin) {
   // max_connections 1: 앨범 사진이 동시에 들어와 사진 목록을 서로 덮어쓰지 않게 한 번에 하나씩 받는다.
   // (사진 처리는 DB 에 붙이고 바로 200 — 무거운 일은 waitUntil 이라 줄이 길어지지 않는다)

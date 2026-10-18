@@ -9,7 +9,7 @@
 //   · 초안을 보여 준 뒤 사진이 더 오면 draft.js 가 앞 초안에 합칠지 판단한다(같은 문서면 합침).
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
-import { processSessionV2 } from "./draft.js";
+import { processSessionV2, getMergeAsk, resolveMergeAsk } from "./draft.js";
 
 export const QUIET_MS = 12_000;       // 마지막 사진·설명 뒤 이만큼 조용하면 분석
 export const STALE_SEC = 90;          // 타이머가 잘렸을 때 Cron 이 줍는 기준
@@ -181,6 +181,40 @@ export async function handleCollectText(env, deps, ctx, { session, text, esc, fi
   const stamp = await touchSession(env, deps, session.id, { hint: hint.slice(0, 1000) });
   armQuietTimer(env, deps, ctx, { sessionId: session.id, stamp, esc, findUser });
   return true;
+}
+
+// '앞 초안에 합칠까요?'를 물어 둔 상태에서 온 말 — 그 답이면 처리하고 true
+const JOIN_EXACT = ["합쳐", "합쳐줘", "합쳐 줘", "합치기", "같은 거야", "같은거야", "이어지는 거야", "응 합쳐", "ㅇㅇ 합쳐"];
+const APART_EXACT = ["따로", "따로 해줘", "따로 만들어", "따로 만들어줘", "다른 거야", "다른거야", "별개야", "새로 만들어"];
+export async function handleMergeAnswer(env, deps, { chatId, text, esc }) {
+  const ask = await getMergeAsk(env, deps, chatId);
+  if (!ask) return false;
+  const t = String(text || "").trim().toLowerCase().replace(/[.!~?ㅎㅋ]+$/g, "").trim();
+  let ans = JOIN_EXACT.includes(t) ? "join" : APART_EXACT.includes(t) ? "apart" : null;
+  if (!ans && env.ANTHROPIC_API_KEY) {
+    try {
+      const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 15_000 });
+      const res = await client.messages.create({
+        model: NOTE_MODEL,
+        max_tokens: 1024,
+        output_config: {
+          effort: "low",
+          format: { type: "json_schema", schema: { type: "object", properties: { answer: { type: "string", enum: ["join", "apart", "other"] } }, required: ["answer"], additionalProperties: false } },
+        },
+        system: "봇이 학부모에게 '방금 보낸 알림장 사진을 앞 초안에 합칠까요, 따로 만들까요?' 하고 물었다. 방금 온 말이 그 답인지 고른다.\n" +
+          "- join: 합치라는 뜻 ('같은 거야', '뒷장이야', '응 합쳐')\n- apart: 따로 하라는 뜻 ('다른 안내문이야', '별개야')\n" +
+          "- other: 이 질문의 답이 아님 (다른 부탁·질문). 애매하면 other.",
+        messages: [{ role: "user", content: String(text).slice(0, 300) }],
+      });
+      const block = (res.content || []).find((b) => b.type === "text");
+      const a = block ? JSON.parse(block.text).answer : null;
+      if (a === "join" || a === "apart") ans = a;
+    } catch (err) {
+      console.error("merge answer classify error:", err);
+    }
+  }
+  if (!ans) return false;
+  return resolveMergeAsk(env, deps, { sessionId: ask.id, join: ans === "join", chatId, esc });
 }
 
 // Cron 안전망: 타이머가 잘려 남은 세션을 줍는다

@@ -3,7 +3,8 @@
 //   사진은 index.js·collect.js 가 upload_sessions 에 모으고, 조용해지면(또는 "다 보냈어") processSessionV2 가
 //   Claude Vision 으로 초안을 뽑아 upload_sessions.draft 에 두고, 번호 목록 + [✅ 저장][❌ 취소] 버튼을 보낸다.
 //   고치는 말("2번은 금요일로")은 assistant.js 가 set_draft_tasks 도구로 처리하고, 저장은 saveDraft().
-//   초안을 보여 준 뒤 사진이 더 오면(30분 안) 같은 문서인지 보고, 같으면 앞 초안에 합친다 — 고친 내용은 그대로 둔다.
+//   초안을 보여 준 뒤 사진이 더 오면(30분 안) 같은 문서인지 본다. 같으면 앞 초안에 합치고(고친 내용은 그대로),
+//   다르면 새 초안, 헷갈리면 [📎 합치기][📄 따로] 버튼으로 묻는다(status merge_ask, 말로 답해도 된다).
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
 import { notifyFamily } from "./family.js";
@@ -117,9 +118,12 @@ const SUBMIT_DRAFT_TOOL_WITH_PRIOR = {
     ...SUBMIT_DRAFT_TOOL.input_schema,
     properties: {
       ...SUBMIT_DRAFT_TOOL.input_schema.properties,
-      continues_previous: { type: "boolean", description: "이번 사진이 앞서 받은 알림장의 이어지는 쪽(뒷면·다음 장·같은 안내의 첨부)이면 true, 다른 문서면 false" },
+      continuity: {
+        type: "string", enum: ["same", "different", "unsure"],
+        description: "앞서 받은 알림장과의 관계. same=확실히 이어지는 쪽(뒷면·다음 장·같은 행사의 첨부), different=확실히 다른 문서, unsure=판단이 서지 않음(부모에게 묻는다)",
+      },
     },
-    required: [...SUBMIT_DRAFT_TOOL.input_schema.required, "continues_previous"],
+    required: [...SUBMIT_DRAFT_TOOL.input_schema.required, "continuity"],
   },
 };
 
@@ -127,8 +131,9 @@ function priorNote(prior) {
   const tasks = (prior.tasks || []).map((t, i) => `${i + 1}. ${t.title} | ${t.due_date}${t.due_time ? " " + t.due_time : ""}`).join("\n") || "(없음)";
   const changes = (prior.schedule_changes || []).map((c) => describeChange(c)).join("\n") || "(없음)";
   return `\n\n[앞서 받은 알림장 초안] 제목: ${prior.document_title || ""}\n요약: ${prior.summary || ""}\n할 일:\n${tasks}\n시간표 변경:\n${changes}\n` +
-    "이번 사진이 위 알림장의 이어지는 쪽이면 continues_previous=true 로 하고, 위에 이미 있는 할 일·시간표 변경은 다시 넣지 말고 새로 나온 것만 넣는다. " +
-    "다른 문서면 continues_previous=false 로 하고 평소처럼 전부 뽑는다.";
+    "이번 사진이 위 알림장의 이어지는 쪽이 확실하면 continuity=same 으로 하고, 위에 이미 있는 할 일·시간표 변경은 다시 넣지 말고 새로 나온 것만 넣는다. " +
+    "확실히 다른 문서면 continuity=different 로 하고 평소처럼 전부 뽑는다. " +
+    "제목·날짜·행사 이름이 겹치는지 보고도 판단이 서지 않으면 짐작하지 말고 continuity=unsure 로 하고, 이 사진에서 읽은 것을 전부 넣는다(부모가 정한다).";
 }
 
 export async function analyzePhotos(env, deps, { images, hint, todayStr, prior = null }) {
@@ -172,7 +177,7 @@ export async function analyzePhotos(env, deps, { images, hint, todayStr, prior =
           schedule_changes: (d.schedule_changes || []).map(normalizeChange).filter(Boolean),
           key_facts: Array.isArray(d.key_facts) ? d.key_facts.map((s) => String(s).slice(0, 120)).slice(0, 12) : [],
           unclear: Array.isArray(d.unclear) ? d.unclear.slice(0, 5) : [],
-          continues_previous: prior ? d.continues_previous === true : false,
+          continuity: prior ? (["same", "different", "unsure"].includes(d.continuity) ? d.continuity : "unsure") : "different",
         },
         usage,
       };
@@ -305,42 +310,119 @@ export async function processSessionV2(env, deps, { chatId, userTg, session, hin
 
     const prior = await findMergeTarget(env, deps, chatId, session.id);
     const { draft, usage } = await analyzePhotos(env, deps, { images, hint, todayStr, prior: prior ? prior.draft : null });
-    console.log(`[Draft] chat=${chatId} photos=${images.length} tasks=${draft.tasks.length} prior=${prior ? prior.id : "-"} continues=${draft.continues_previous} in=${usage.input} out=${usage.output}`);
+    console.log(`[Draft] chat=${chatId} photos=${images.length} tasks=${draft.tasks.length} prior=${prior ? prior.id : "-"} continuity=${draft.continuity} in=${usage.input} out=${usage.output}`);
     if (deps.addUsage) await deps.addUsage(env, chatId, todayStr, usage);
 
-    if (prior && draft.continues_previous) {
+    const continuity = draft.continuity;
+    delete draft.continuity;
+    if (prior && continuity === "same") {
       await mergeIntoPrior(env, deps, { chatId, prior, session, draft, esc });
       return;
     }
-    delete draft.continues_previous;
-
-    if (draft.tasks.length === 0 && draft.schedule_changes.length === 0) {
-      // 할 일은 없지만 사진 맥락(key_facts)은 초안으로 남겨 둔다 → "그거라도 넣어줘" 가 이어진다
-      let msg = `📋 <b>${esc(draft.document_title)}</b>\n`;
-      if (draft.summary) msg += `<i>${esc(draft.summary)}</i>\n`;
-      msg += "\n🤔 지금 해야 할 일은 못 찾았어요.";
-      if (draft.key_facts.length) msg += "\n\n읽은 내용\n" + draft.key_facts.map((f) => `• ${esc(f)}`).join("\n");
-      if (draft.unclear.length) msg += "\n\n❓ 확인 필요\n" + draft.unclear.map((u) => `• ${esc(u)}`).join("\n");
-      msg += "\n\n넣고 싶은 게 있으면 말씀해 주세요. (예: \"신청 마감 넣어줘\", \"지난 일정이라도 넣어줘\")";
-      const sent = await deps.tg(token, "sendMessage", {
-        chat_id: chatId, text: msg, parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[{ text: "❌ 닫기", callback_data: `draft:cancel:${session.id}` }]] },
-      });
-      const messageId = sent && sent.result ? sent.result.message_id : null;
-      await patchSession(env, deps, session.id, { status: "draft", draft, draft_message_id: messageId });
+    if (prior && continuity === "unsure") {
+      await askMerge(env, deps, { chatId, prior, session, draft, esc });
       return;
     }
-
-    const sent = await deps.tg(token, "sendMessage", {
-      chat_id: chatId, text: renderDraft(draft, esc), parse_mode: "HTML", reply_markup: draftKeyboard(session.id),
-    });
-    const messageId = sent && sent.result ? sent.result.message_id : null;
-    await patchSession(env, deps, session.id, { status: "draft", draft, draft_message_id: messageId });
+    await showDraft(env, deps, { chatId, session, draft, esc });
   } catch (err) {
     console.error("processSessionV2 error:", err);
     await deps.sendMessage(token, chatId, `❌ 분석 중 오류가 났어요. <code>${esc(String((err && err.message) || err).slice(0, 150))}</code>\n다시 시도해 주세요.`);
     await patchSession(env, deps, session.id, { status: "completed" });
   }
+}
+
+// 초안 하나를 보여 주고 저장 대기(status draft)로 둔다
+async function showDraft(env, deps, { chatId, session, draft, esc, head = "" }) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  if (draft.tasks.length === 0 && draft.schedule_changes.length === 0) {
+    // 할 일은 없지만 사진 맥락(key_facts)은 초안으로 남겨 둔다 → "그거라도 넣어줘" 가 이어진다
+    let msg = head + `📋 <b>${esc(draft.document_title)}</b>\n`;
+    if (draft.summary) msg += `<i>${esc(draft.summary)}</i>\n`;
+    msg += "\n🤔 지금 해야 할 일은 못 찾았어요.";
+    if (draft.key_facts.length) msg += "\n\n읽은 내용\n" + draft.key_facts.map((f) => `• ${esc(f)}`).join("\n");
+    if (draft.unclear.length) msg += "\n\n❓ 확인 필요\n" + draft.unclear.map((u) => `• ${esc(u)}`).join("\n");
+    msg += "\n\n넣고 싶은 게 있으면 말씀해 주세요. (예: \"신청 마감 넣어줘\", \"지난 일정이라도 넣어줘\")";
+    const sent = await deps.tg(token, "sendMessage", {
+      chat_id: chatId, text: msg, parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [[{ text: "❌ 닫기", callback_data: `draft:cancel:${session.id}` }]] },
+    });
+    const messageId = sent && sent.result ? sent.result.message_id : null;
+    await patchSession(env, deps, session.id, { status: "draft", draft, draft_message_id: messageId });
+    return;
+  }
+
+  const sent = await deps.tg(token, "sendMessage", {
+    chat_id: chatId, text: head + renderDraft(draft, esc), parse_mode: "HTML", reply_markup: draftKeyboard(session.id),
+  });
+  const messageId = sent && sent.result ? sent.result.message_id : null;
+  await patchSession(env, deps, session.id, { status: "draft", draft, draft_message_id: messageId });
+}
+
+// 앞 초안에 이어지는 사진인지 헷갈릴 때 — 부모에게 묻는다. 답은 버튼이나 말("합쳐줘"/"따로")로.
+async function askMerge(env, deps, { chatId, prior, session, draft, esc }) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const items = (draft.tasks || []).slice(0, 5).map((t) => `• ${esc(t.title)} — ${fmtDate(t.due_date)}`);
+  if (draft.tasks.length > 5) items.push(`• 외 ${draft.tasks.length - 5}개`);
+  let msg = `🤔 방금 보낸 사진이 앞 알림장에 이어지는 건지 헷갈려요.\n\n`;
+  msg += `앞 알림장: <b>${esc(prior.draft.document_title || "알림장")}</b>\n`;
+  msg += `방금 사진: <b>${esc(draft.document_title)}</b>${draft.summary ? `\n<i>${esc(draft.summary)}</i>` : ""}\n`;
+  if (items.length) msg += items.join("\n") + "\n";
+  msg += `\n앞 초안에 합칠까요, 따로 만들까요?`;
+  const sent = await deps.tg(token, "sendMessage", {
+    chat_id: chatId, text: msg, parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [[
+      { text: "📎 앞 초안에 합치기", callback_data: `merge:join:${session.id}` },
+      { text: "📄 따로 만들기", callback_data: `merge:apart:${session.id}` },
+    ]] },
+  });
+  const messageId = sent && sent.result ? sent.result.message_id : null;
+  await patchSession(env, deps, session.id, { status: "merge_ask", draft: { ...draft, merge_into: prior.id }, draft_message_id: messageId });
+}
+
+// 30분 안에 물어본, 아직 답 없는 '합칠까요?' — 말로 답할 때 찾는다
+export async function getMergeAsk(env, deps, chatId) {
+  const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+  const rows = await q(env, deps, "upload_sessions", {
+    query: `?chat_id=eq.${chatId}&status=eq.merge_ask&updated_at=gte.${since}&order=updated_at.desc&limit=1`,
+  });
+  return Array.isArray(rows) && rows[0] ? rows[0] : null;
+}
+
+// '합칠까요?'에 대한 답 처리 (버튼·말 공통)
+export async function resolveMergeAsk(env, deps, { sessionId, join, chatId, esc }) {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const rows = await q(env, deps, "upload_sessions", { query: `?id=eq.${sessionId}&select=*` });
+  const session = Array.isArray(rows) && rows[0] ? rows[0] : null;
+  if (!session || session.status !== "merge_ask") return false;
+  // 같은 질문에 두 번 답하지 않게 먼저 상태를 바꾼다
+  const claimed = await q(env, deps, "upload_sessions", {
+    method: "PATCH", body: { status: "processing", updated_at: new Date().toISOString() }, query: `?id=eq.${sessionId}&status=eq.merge_ask`,
+  });
+  if (!Array.isArray(claimed) || !claimed[0]) return false;
+  if (session.draft_message_id) await deps.tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: session.draft_message_id });
+
+  const draft = { ...(session.draft || {}) };
+  const priorId = draft.merge_into;
+  delete draft.merge_into;
+  if (join && priorId) {
+    const pr = await q(env, deps, "upload_sessions", { query: `?id=eq.${priorId}&select=*` });
+    const prior = Array.isArray(pr) && pr[0] ? pr[0] : null;
+    if (prior && prior.status === "draft" && prior.draft) {
+      await mergeIntoPrior(env, deps, { chatId, prior, session, draft, esc });
+      return true;
+    }
+    await showDraft(env, deps, { chatId, session, draft, esc, head: "앞 초안은 이미 저장했거나 닫혀서, 따로 보여 드릴게요.\n\n" });
+    return true;
+  }
+  await showDraft(env, deps, { chatId, session, draft, esc, head: "📄 따로 만들었어요.\n\n" });
+  return true;
+}
+
+const normTitle = (s) => String(s || "").replace(/[\s·.,()\[\]~!-]/g, "").toLowerCase();
+function sameTask(a, b) {
+  if (a.due_date !== b.due_date) return false;
+  const x = normTitle(a.title), y = normTitle(b.title);
+  return x === y || (x.length >= 3 && y.length >= 3 && (x.includes(y) || y.includes(x)));
 }
 
 // 30분 안에 보여 준, 아직 저장 안 한 초안 — 늦게 온 사진을 합칠 후보
@@ -360,14 +442,13 @@ async function mergeIntoPrior(env, deps, { chatId, prior, session, draft, esc })
     ...pd,
     document_title: (!pd.document_title || pd.document_title === "알림장") ? draft.document_title : pd.document_title,
     summary: [pd.summary, draft.summary].filter(Boolean).join(" ").slice(0, 400),
-    tasks: [...(pd.tasks || []), ...draft.tasks],
+    tasks: [...(pd.tasks || []), ...draft.tasks.filter((t) => !(pd.tasks || []).some((p) => sameTask(p, t)))],
     schedule_changes: [...(pd.schedule_changes || []), ...draft.schedule_changes],
     key_facts: [...(pd.key_facts || []), ...draft.key_facts].slice(0, 20),
     unclear: [...(pd.unclear || []), ...draft.unclear].slice(0, 6),
   };
-  delete merged.continues_previous;
   const ids = [...(prior.photo_file_ids || []), ...(session.photo_file_ids || [])];
-  const added = draft.tasks.length + draft.schedule_changes.length;
+  const added = (merged.tasks.length - (pd.tasks || []).length) + draft.schedule_changes.length;
 
   if (prior.draft_message_id) await deps.tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: prior.draft_message_id });
   const head = `📎 앞 알림장에 이어지는 사진이라 합쳤어요 (사진 ${ids.length}장, ${added ? `새로 ${added}건` : "새 항목 없음"})\n\n`;
@@ -498,6 +579,13 @@ export async function handleDraftCallback(env, deps, cq, esc) {
   const data = String(cq.data || "");
   const chatId = cq.message && cq.message.chat ? cq.message.chat.id : null;
   const messageId = cq.message ? cq.message.message_id : null;
+  const mm = data.match(/^merge:(join|apart):([0-9a-f-]{36})$/);
+  if (mm && chatId) {
+    await deps.tg(token, "answerCallbackQuery", { callback_query_id: cq.id, text: mm[1] === "join" ? "합치는 중..." : "따로 만드는 중..." });
+    const ok = await resolveMergeAsk(env, deps, { sessionId: mm[2], join: mm[1] === "join", chatId, esc });
+    if (!ok && messageId) await deps.tg(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId });
+    return;
+  }
   const m = data.match(/^draft:(save|cancel):([0-9a-f-]{36})$/);
   if (!m || !chatId) {
     await deps.tg(token, "answerCallbackQuery", { callback_query_id: cq.id, text: "알 수 없는 버튼이에요" });
