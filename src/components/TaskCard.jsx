@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { fetchDocumentImages, updateTask, deleteTask } from "../lib/tasks";
-import { supabase } from "../lib/supabase";
+import { fileUrls } from "../lib/storageUrl";
 
 const priorityConfig = {
   high: { label: "긴급", color: "var(--red)", bg: "var(--red-bg)" },
@@ -69,14 +69,9 @@ export default function TaskCard({ task, onToggle, onUpdate }) {
     try {
       const imgs = await fetchDocumentImages(task.document_id);
       if (imgs && imgs.length > 0) {
-        const withUrls = imgs.map((img) => {
-          if (img.storage_path) {
-            const url = `${supabase.supabaseUrl}/storage/v1/object/public/document-images/${img.storage_path}`;
-            return { ...img, url };
-          }
-          return img;
-        });
-        setImages(withUrls);
+        // 비공개 버킷: 1시간짜리 서명 URL (카드를 다시 펼치면 재발급)
+        const urls = await fileUrls("document-images", imgs.map((i) => i.storage_path));
+        setImages(imgs.map((img) => (img.storage_path ? { ...img, url: urls[img.storage_path] } : img)));
       }
     } catch (err) { console.error("Failed to load images:", err); }
     setImagesLoaded(true);

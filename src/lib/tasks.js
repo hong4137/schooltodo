@@ -76,10 +76,7 @@ export async function fetchDocumentImages(documentId) {
   return data;
 }
 
-export function getImageUrl(storagePath) {
-  if (!storagePath) return null;
-  return `${supabase.supabaseUrl}/storage/v1/object/authenticated/document-images/${storagePath}`;
-}
+// 이미지 주소는 lib/storageUrl.js 의 fileUrls() 로 (서명 URL). 예전 getImageUrl 은 <img> 에서 쓸 수 없는 authenticated 경로였다.
 
 export async function fetchTasksByMonth(userId, year, month) {
   const startDate = `${year}-${String(month + 1).padStart(2, "0")}-01`;

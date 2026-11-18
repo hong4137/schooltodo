@@ -218,7 +218,12 @@ function PostDetail({ post, onBack, onEdit, onDelete, onPin, onDeleteFile }) {
 // ══════════════════════════════
 function FileItem({ file, onDelete }) {
   const isImage = file.mime_type?.startsWith("image/");
-  const url = getFileUrl(file.storage_path);
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    getFileUrl(file.storage_path).then((u) => { if (alive) setUrl(u); });
+    return () => { alive = false; };
+  }, [file.storage_path]);
   const sizeStr = file.file_size > 1024 * 1024
     ? `${(file.file_size / 1024 / 1024).toFixed(1)}MB`
     : `${Math.round(file.file_size / 1024)}KB`;

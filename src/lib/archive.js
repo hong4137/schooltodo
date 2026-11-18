@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { fileUrl } from "./storageUrl";
 
 const BUCKET = "archive-files";
 
@@ -88,8 +89,9 @@ export async function deleteFile(fileId, storagePath) {
   if (error) throw error;
 }
 
+// 비공개 버킷: 서명 URL (실패 시 공개 주소로 fallback). 비동기.
 export function getFileUrl(storagePath) {
-  return `${supabase.supabaseUrl}/storage/v1/object/public/${BUCKET}/${storagePath}`;
+  return fileUrl(BUCKET, storagePath);
 }
 
 async function resizeImage(file, maxWidth) {

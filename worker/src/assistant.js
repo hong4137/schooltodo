@@ -714,10 +714,17 @@ async function executeTool(name, input, ctx) {
       if (!imgs.length) return { sent: 0, note: "저장된 사진이 없음" };
       let sent = 0;
       for (const im of imgs) {
-        const photo = im.storage_path ? `${env.SUPABASE_URL}/storage/v1/object/public/document-images/${im.storage_path}` : im.telegram_file_id;
-        if (!photo) continue;
-        const r = await deps.tg(env.TELEGRAM_BOT_TOKEN, "sendPhoto", { chat_id: ctx.chatId, photo, caption: sent === 0 ? `📎 ${docs[0].title || "알림장"}` : undefined });
-        if (r && r.ok) sent += 1;
+        // 비공개 버킷: service role 로 10분짜리 서명 URL. 안 되면 Telegram 에 남은 file_id 로.
+        const candidates = [];
+        if (im.storage_path) {
+          const signed = await signStorageUrl(env, "document-images", im.storage_path, 600);
+          if (signed) candidates.push(signed);
+        }
+        if (im.telegram_file_id) candidates.push(im.telegram_file_id);
+        for (const photo of candidates) {
+          const r = await deps.tg(env.TELEGRAM_BOT_TOKEN, "sendPhoto", { chat_id: ctx.chatId, photo, caption: sent === 0 ? `📎 ${docs[0].title || "알림장"}` : undefined });
+          if (r && r.ok) { sent += 1; break; }
+        }
       }
       return { sent, title: docs[0].title };
     }
@@ -765,6 +772,24 @@ async function removeDraftButtons(env, deps, ctx) {
 export async function recordUsage(env, deps, chatId, day, usage) {
   const existing = await getUsageToday(env, deps, chatId, day);
   await addUsage(env, deps, chatId, day, usage, existing);
+}
+
+// ── Storage 서명 URL (service role) ───────────────────────────
+async function signStorageUrl(env, bucket, path, expiresInSec) {
+  try {
+    const res = await fetch(`${env.SUPABASE_URL}/storage/v1/object/sign/${bucket}/${path}`, {
+      method: "POST",
+      headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ expiresIn: expiresInSec }),
+    });
+    if (!res.ok) { console.error("sign url failed:", res.status, (await res.text()).slice(0, 150)); return null; }
+    const data = await res.json();
+    if (!data || !data.signedURL) return null;
+    return `${env.SUPABASE_URL}/storage/v1${data.signedURL.startsWith("/") ? "" : "/"}${data.signedURL}`;
+  } catch (err) {
+    console.error("sign url error:", err);
+    return null;
+  }
 }
 
 // ── 시간표 유틸 ───────────────────────────────────────────────
