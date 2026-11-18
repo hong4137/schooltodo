@@ -46,4 +46,5 @@
 - `document-images` — 알림장 원본. Worker 가 `/object/authenticated/` 로 올리고, 웹은 `/object/public/` 으로 읽는다(public 버킷).
 - `archive-files` — 보관함 첨부. 업로드 전 1200px 리사이즈.
 
-둘 다 public. URL 을 아는 사람은 볼 수 있다. 가족용이라 유지하기로 결정(2026-10).
+2026-11 비공개 전환 중. 접근은 서명 URL(웹 `lib/storageUrl.js`, 봇 `signStorageUrl`). 정책은 012 — **본인 폴더만** 읽기·쓰기·삭제(경로 첫 칸 = `auth.uid()`).
+운영 방식: 계정 하나(fdb9…)를 가족이 함께 쓴다. 신규 가입은 대시보드에서 꺼 둔다(계정 추가는 Add user 로만). 버킷 Public 해제는 서명 URL 확인 뒤 마지막에 수동. 배우자 계정을 따로 만들 때 테이블 공용화와 가족 읽기 정책을 같이 넣는다.
